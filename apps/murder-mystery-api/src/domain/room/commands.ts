@@ -94,6 +94,12 @@ export class RoomCommandService {
       this.assertTool(roomId,playerId,'ask_player')
       this.rooms.requirePlayer(roomId,targetPlayerId)
       if(targetPlayerId===playerId) throw new Error('CANNOT_ASK_SELF')
+      const activeRound=this.requireRound(roomId)
+      const activeDefinition=this.director.definition(roomId)
+      if(activeDefinition.type==='discussion'&&activeDefinition.mode==='free') {
+        const targetState=this.rooms.requireRoundState(activeRound.id,targetPlayerId)
+        if(targetState.discussionFinished) throw new Error('TARGET_FINISHED_ROUND')
+      }
       const content=question.trim()
       if(!content) throw new Error('QUESTION_EMPTY')
       const round=this.requireRound(roomId)
@@ -164,6 +170,7 @@ export class RoomCommandService {
       this.rooms.updateRoundState(round.id,playerId,{
         lastSeenPublicVersion:sharedVersion,
         doneAtPublicVersion:sharedVersion,
+        discussionFinished:true,
         activationCount:state.activationCount+1,
         initialActionDone:true,
       })
@@ -173,6 +180,26 @@ export class RoomCommandService {
         type:'round_finished',visibility:'control',ownerPlayerId:playerId,payload:{sharedVersion},
       })
       return {eventId:event.id,sharedVersion}
+    })
+  }
+
+  pass(roomId:string,playerId:string,commandId:string) {
+    return this.run(roomId,playerId,commandId,'pass',()=>{
+      this.assertTool(roomId,playerId,'pass')
+      const round=this.requireRound(roomId)
+      const pending=this.rooms.listPendingQuestions(roomId).some(question=>
+        question.toPlayerId===playerId && question.status==='pending'
+      )
+      if(pending) throw new Error('PASS_NOT_ALLOWED_WITH_PENDING_QUESTION')
+      const sharedVersion=this.rooms.requireRoom(roomId).sharedVersion
+      const state=this.rooms.requireRoundState(round.id,playerId)
+      if(state.discussionFinished) throw new Error('PLAYER_ALREADY_FINISHED_ROUND')
+      this.rooms.updateRoundState(round.id,playerId,{
+        lastSeenPublicVersion:sharedVersion,
+        activationCount:state.activationCount+1,
+        initialActionDone:true,
+      })
+      return {sharedVersion,silent:true}
     })
   }
 
@@ -324,6 +351,11 @@ export class RoomCommandService {
     if(room.status!=='running'&&room.status!=='voting') throw new Error('ROOM_NOT_RUNNING')
     const definition=this.director.definition(roomId)
     if(!definition.allowedTools.includes(tool as never)) throw new Error('TOOL_NOT_ALLOWED_IN_ROUND')
+    if(definition.type==='discussion'&&definition.mode==='free') {
+      const round=this.requireRound(roomId)
+      const state=this.rooms.requireRoundState(round.id,playerId)
+      if(state.discussionFinished) throw new Error('PLAYER_ALREADY_FINISHED_ROUND')
+    }
     if(definition.type==='discussion'&&definition.mode!=='free'&&!this.director.isOrderedTurn(roomId,playerId)) {
       throw new Error('NOT_ORDERED_TURN')
     }

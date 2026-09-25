@@ -2,7 +2,7 @@ import { dirname, isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
 import { MurderMysteryDatabase } from './infra/sqlite/database.js'
-import { readAiConfig } from './infra/config/ai.js'
+import { readAiConfig, readSchedulerConfig } from './infra/config/ai.js'
 import { ScriptRepository } from './domain/script/repository.js'
 import { RoomRepository } from './domain/room/repository.js'
 import { GameDirector } from './domain/round/director.js'
@@ -33,13 +33,16 @@ config.agentDbPath=absolute(process.env.AI_MURDER_MYSTERY_AGENT_DB,'data/agent.s
 const runtime=config.mode==='mock'
   ? new MockPlayerAgentRuntime(rooms,scripts,director,commands)
   : new LivePlayerAgentRuntime(config,rooms,commands,contextBuilder,director)
-const scheduler=new RoomScheduler(rooms,director,runtime)
+const schedulerConfig=readSchedulerConfig()
+const scheduler=new RoomScheduler(rooms,director,runtime,schedulerConfig)
 const app=createApp({rooms,commands,queries,runtime,scheduler})
+
+runtime.assertReady()
 
 const port=Number(process.env.AI_MURDER_MYSTERY_API_PORT??3200)
 if(!Number.isInteger(port)||port<1||port>65535) throw new Error('INVALID_PORT')
 const server=serve({fetch:app.fetch,hostname:'127.0.0.1',port},info=>{
-  console.log(`MurderMystery V2 API listening on http://127.0.0.1:${info.port}; aiMode=${config.mode}`)
+  console.log(`MurderMystery V2 API listening on http://127.0.0.1:${info.port}; aiMode=${config.mode}; model=${config.provider}/${config.model}`)
   scheduler.resumeActiveRooms()
 })
 

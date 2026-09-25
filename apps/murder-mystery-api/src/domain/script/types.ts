@@ -118,6 +118,7 @@ export interface PlayerRoundStateRecord {
   roomPlayerId: string
   lastSeenPublicVersion: number
   doneAtPublicVersion: number | null
+  discussionFinished: boolean
   activationCount: number
   initialActionDone: boolean
   searchActionsUsed: number

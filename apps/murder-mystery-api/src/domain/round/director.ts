@@ -108,9 +108,7 @@ export class GameDirector {
     if(definition.type==='discussion') {
       if(definition.mode==='ordered') return states.every(state=>state.initialActionDone)
       const pending=this.rooms.listPendingQuestions(roomId)
-      return pending.length===0 && states.every(state=>
-        state.doneAtPublicVersion!==null && state.doneAtPublicVersion>=room.sharedVersion
-      )
+      return pending.length===0 && states.every(state=>state.discussionFinished)
     }
 
     if(definition.type==='search') {

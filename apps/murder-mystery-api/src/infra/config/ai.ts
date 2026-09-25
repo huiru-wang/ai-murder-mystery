@@ -21,3 +21,26 @@ export function assertLiveModelConfigured(config:MurderMysteryAiConfig,env:NodeJ
   const keyName=`${config.provider.toUpperCase().replace(/[^A-Z0-9]/g,'_')}_API_KEY`
   if(!env[keyName]?.trim()) throw new Error('MODEL_NOT_CONFIGURED')
 }
+
+
+export type MurderMysterySchedulerConfig = {
+  discussionPacingAfterMinutes: number
+  discussionPacingMessageCount: number
+  discussionPacingActivationCount: number
+}
+
+function positiveInteger(env:NodeJS.ProcessEnv,name:string,fallback:number):number {
+  const raw=env[name]
+  if(raw===undefined||raw.trim()==='') return fallback
+  const value=Number(raw)
+  if(!Number.isInteger(value)||value<1) throw new Error(`INVALID_${name}`)
+  return value
+}
+
+export function readSchedulerConfig(env:NodeJS.ProcessEnv=process.env):MurderMysterySchedulerConfig {
+  return {
+    discussionPacingAfterMinutes:positiveInteger(env,'AI_MURDER_MYSTERY_DISCUSSION_PACING_AFTER_MINUTES',8),
+    discussionPacingMessageCount:positiveInteger(env,'AI_MURDER_MYSTERY_DISCUSSION_PACING_MESSAGE_COUNT',30),
+    discussionPacingActivationCount:positiveInteger(env,'AI_MURDER_MYSTERY_DISCUSSION_PACING_ACTIVATION_COUNT',45),
+  }
+}

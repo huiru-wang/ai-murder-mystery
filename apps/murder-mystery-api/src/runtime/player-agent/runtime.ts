@@ -25,10 +25,13 @@ export interface PlayerAgentRuntime {
   assertReady():void
   ensureRoomSessions(roomId:string):Promise<void>
   run(trigger:AgentTrigger):Promise<void>
+  abortRoom(roomId:string):Promise<void>
   close():Promise<void>
 }
 
 type ManagedSession = {
+  roomId:string
+  playerId:string
   runtimeSessionId:string
   bindingId:string
   session:Session
@@ -55,12 +58,14 @@ export class LivePlayerAgentRuntime implements PlayerAgentRuntime {
       databasePath:config.agentDbPath,
       databaseFactory:createNodeSqliteFactory(),
     })
-    this.revision=`v2:${config.provider}/${config.model}`
+    this.revision=`v4:${config.provider}/${config.model}`
   }
 
   assertReady() {
     assertLiveModelConfigured(this.config)
-    if(!this.models.getModel(this.config.provider,this.config.model)) throw new Error('MODEL_NOT_IN_CATALOG')
+    if(!this.models.getModel(this.config.provider,this.config.model)) {
+      throw new Error(`MODEL_NOT_IN_CATALOG: ${this.config.provider}/${this.config.model}`)
+    }
   }
 
   async ensureRoomSessions(roomId:string) {
@@ -84,10 +89,13 @@ export class LivePlayerAgentRuntime implements PlayerAgentRuntime {
         return
       }
     }
-    await managed.lane.setActiveTools(definition.allowedTools,TODO_CONTEXT)
+    const agentAllowedTools=trigger.type==='nudge'
+      ? definition.allowedTools.filter(tool=>tool!=='pass')
+      : definition.allowedTools
+    await managed.lane.setActiveTools(agentAllowedTools,TODO_CONTEXT)
     let toolCount=0
     let terminalCalled=false
-    const terminalTools=new Set(['finish_round','yield_turn','finish_search','submit_vote'])
+    const terminalTools=new Set(['pass','finish_round','yield_turn','finish_search','submit_vote'])
     if(definition.id==='introduction') terminalTools.add('send_message')
     const unsubscribe=managed.harness.hooks.on('before_tool',({toolName})=>{
       if(terminalCalled) return {block:{reason:'This activation already ended with a terminal game action',terminate:true}}
@@ -104,8 +112,22 @@ export class LivePlayerAgentRuntime implements PlayerAgentRuntime {
       triggerEventId:trigger.sourceEventId??null,
     })
     try {
-      const result=await managed.lane.prompt(context.dynamicPrompt,undefined,TODO_CONTEXT)
-      const modelCompleted=result.ok&&result.value.status==='completed'
+      let result=await managed.lane.prompt(context.dynamicPrompt,undefined,TODO_CONTEXT)
+      let modelCompleted=result.ok&&result.value.status==='completed'
+      if(modelCompleted&&toolCount===0&&definition.type==='discussion'&&definition.mode==='free') {
+        const recoveryPrompt=trigger.type==='direct_question'&&trigger.questionId
+          ? `你上一条只输出了普通文本，因此没有执行任何游戏动作，其他玩家也看不到那段文字。现在必须调用 reply_question 或 decline_question 处理 questionId=${trigger.questionId}。不要再输出普通文本。`
+          : trigger.type==='nudge'
+            ? '你正在被真人催促结束本轮。上一条只输出普通文本，不算有效行动。现在只有两种选择：如果还有新的关键内容，立即调用 send_message 或 ask_player；如果没有，立即调用 finish_round。不要调用 pass，不要再输出普通文本。'
+            : '你上一条只输出了普通文本，因此没有执行任何游戏动作，其他玩家也看不到那段文字。请把刚才的真实意图转换成一个工具调用：想公开表达就调用 send_message；想定向提问就调用 ask_player；当前不想说就调用 pass；确定退出本轮才调用 finish_round。必须调用工具，不要再输出普通文本。'
+        result=await managed.lane.prompt(recoveryPrompt,undefined,TODO_CONTEXT)
+        modelCompleted=result.ok&&result.value.status==='completed'
+        if(modelCompleted&&toolCount===0&&trigger.type!=='direct_question') {
+          if(trigger.type==='nudge') this.commands.finishRound(trigger.roomId,trigger.playerId,randomUUID())
+          else this.commands.pass(trigger.roomId,trigger.playerId,randomUUID())
+          toolCount=1
+        }
+      }
       let searchResolved=false
       if(definition.type==='search') {
         const active=this.rooms.getCurrentRound(trigger.roomId)
@@ -134,38 +156,16 @@ export class LivePlayerAgentRuntime implements PlayerAgentRuntime {
             || this.rooms.requireRoundState(roundAtStart.id,trigger.playerId).initialActionDone
         }
       }
-      let discussionResolved=false
-      if(definition.type==='discussion'&&definition.mode==='free'&&toolCount===0&&modelCompleted) {
-        if(trigger.type==='round_started') {
-          await managed.lane.prompt(
-            '你刚才没有执行任何游戏动作。这是本轮自由讨论中你的首次参与机会。必须调用一个可用工具完成一次公开参与，优先调用 send_message 发表一个与当前案件有关的观点或问题。不要只输出普通文本。',
-            undefined,
-            TODO_CONTEXT,
-          )
-          if(toolCount===0) {
-            this.commands.sendMessage(trigger.roomId,trigger.playerId,randomUUID(),context.discussionFallbackText)
-            toolCount=1
-          }
-        } else if(trigger.type==='direct_question'&&trigger.questionId) {
-          await managed.lane.prompt(
-            `你刚才没有回应被点名的问题。必须调用 reply_question 或 decline_question 处理 questionId=${trigger.questionId}，不要只输出普通文本。`,
-            undefined,
-            TODO_CONTEXT,
-          )
-          if(toolCount===0) {
-            this.commands.declineQuestion(trigger.roomId,trigger.playerId,randomUUID(),trigger.questionId)
-            toolCount=1
-          }
-        } else {
-          this.commands.finishRound(trigger.roomId,trigger.playerId,randomUUID())
-          toolCount=1
-        }
-        const active=this.rooms.getCurrentRound(trigger.roomId)
-        discussionResolved=active?.id!==roundAtStart.id
-          || this.rooms.requireRoundState(roundAtStart.id,trigger.playerId).activationCount>0
-      }
+      const discussionResolved=false
       const activationResolved=searchResolved||introductionResolved||discussionResolved
-      if(!modelCompleted&&!activationResolved) throw new Error('AGENT_RUN_FAILED')
+      if(!modelCompleted&&!activationResolved) {
+        const detail=result.ok
+          ? result.value.status==='suspended'
+            ? 'status=suspended'
+            : result.value.error?.message ?? `status=${result.value.status}`
+          : result.error.message
+        throw new Error(`AGENT_RUN_FAILED: ${detail}`)
+      }
       if(toolCount===0&&!activationResolved) throw new Error('AGENT_NO_TOOL_ACTION')
       this.rooms.completeAgentRun(runId,'completed',toolCount)
       this.rooms.touchAgentSession(managed.bindingId)
@@ -175,6 +175,15 @@ export class LivePlayerAgentRuntime implements PlayerAgentRuntime {
     } finally {
       unsubscribe()
     }
+  }
+
+  async abortRoom(roomId:string) {
+    const managed=[...this.cache.values()].filter(item=>item.roomId===roomId)
+    await Promise.all(managed.map(async item=>{
+      try { await item.lane.abort(TODO_CONTEXT) } catch {}
+      try { await item.harness.close(TODO_CONTEXT) } catch {}
+      this.cache.delete(item.playerId)
+    }))
   }
 
   async close() {
@@ -236,7 +245,7 @@ export class LivePlayerAgentRuntime implements PlayerAgentRuntime {
       const lane=await harness.lane('main',{createAt:null},TODO_CONTEXT)
       await lane.setModel({provider:this.config.provider,modelId:this.config.model},TODO_CONTEXT)
       await lane.setActiveTools(tools.map(tool=>tool.name),TODO_CONTEXT)
-      const managed={runtimeSessionId,bindingId:binding.id,session,harness,lane}
+      const managed={roomId,playerId,runtimeSessionId,bindingId:binding.id,session,harness,lane}
       this.cache.set(playerId,managed)
       return managed
     } catch(error) {
@@ -323,6 +332,8 @@ export class MockPlayerAgentRuntime implements PlayerAgentRuntime {
       this.commands.submitVote(trigger.roomId,player.id,randomUUID(),target,'mock vote')
     }
   }
+
+  async abortRoom(_roomId:string) {}
 
   async close() {}
 }

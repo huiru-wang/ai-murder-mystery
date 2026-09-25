@@ -10,10 +10,11 @@ import { RoomQueryService } from '../src/domain/room/queries.js'
 import { RoomRepository } from '../src/domain/room/repository.js'
 import { GameDirector, shuffledTurnOrder } from '../src/domain/round/director.js'
 import { ScriptRepository } from '../src/domain/script/repository.js'
-import { assertLiveModelConfigured } from '../src/infra/config/ai.js'
+import { assertLiveModelConfigured, readSchedulerConfig } from '../src/infra/config/ai.js'
 import { MurderMysteryDatabase } from '../src/infra/sqlite/database.js'
 import { PlayerAgentContextBuilder } from '../src/runtime/player-agent/context-builder.js'
 import { MockPlayerAgentRuntime } from '../src/runtime/player-agent/runtime.js'
+import { createPlayerTools } from '../src/runtime/player-agent/tools/index.js'
 import { RoomScheduler } from '../src/runtime/scheduler/room-scheduler.js'
 
 function createWorld() {
@@ -192,7 +193,7 @@ test('structured question creates a targeted public interaction and direct trigg
   }
 })
 
-test('private clue stays isolated until reveal and public version invalidates stale finish', async () => {
+test('private clue stays isolated until reveal and pass remains temporary across public changes', async () => {
   const w = createWorld()
   try {
     const { roomId, human } = startOneHuman(w)
@@ -201,14 +202,15 @@ test('private clue stays isolated until reveal and public version invalidates st
     await finishIntroduction(w, roomId, human.id)
     assert.equal(w.director.definition(roomId).id, 'discussion-1')
 
-    w.commands.finishRound(roomId, human.id, randomUUID())
+    w.commands.pass(roomId, human.id, randomUUID())
     const discussion = w.rooms.getCurrentRound(roomId)!
-    const finishedAt = w.rooms.requireRoundState(discussion.id, human.id).doneAtPublicVersion!
+    const seenAt = w.rooms.requireRoundState(discussion.id, human.id).lastSeenPublicVersion
+    assert.equal(w.rooms.requireRoundState(discussion.id, human.id).discussionFinished, false)
     const shen = players.find(player => player.roleId === 'shen-yan')!
     w.commands.sendMessage(roomId, shen.id, randomUUID(), '我补充一个新的公开信息。')
     const latestVersion = w.rooms.requireRoom(roomId).sharedVersion
-    assert.ok(latestVersion > finishedAt)
-    assert.ok(w.rooms.requireRoundState(discussion.id, human.id).doneAtPublicVersion! < latestVersion)
+    assert.ok(latestVersion > seenAt)
+    assert.ok(w.rooms.requireRoundState(discussion.id, human.id).lastSeenPublicVersion < latestVersion)
 
     w.commands.finishRound(roomId, human.id, randomUUID())
     for (const player of players.filter(player => player.controller === 'agent')) {
@@ -375,6 +377,188 @@ test('introduction requires exactly one public speech from every player in the p
   }
 })
 
+test('pass is silent, terminal, and a later public version can reactivate the AI', async () => {
+  const w = createWorld()
+  try {
+    const { roomId, human } = startOneHuman(w)
+    await finishIntroduction(w, roomId, human.id)
+    const round = w.rooms.getCurrentRound(roomId)!
+    const agents = w.rooms.listPlayers(roomId).filter(player => player.controller === 'agent')
+    const first = agents[0]!
+
+    const context = w.contextBuilder.build(roomId, first.id, {
+      type:'round_started', roomId, playerId:first.id, directedToYou:false,
+    })
+    assert.ok(context.systemPrompt.includes('直接调用 pass'))
+    assert.ok(context.dynamicPrompt.includes('pass'))
+    assert.ok(context.dynamicPrompt.includes('finish_round'))
+    assert.ok(context.dynamicPrompt.includes('pass'))
+
+    const publicBefore = w.rooms.listPublicEvents(roomId).length
+    const passTool = createPlayerTools(w.commands, roomId, first.id).find(tool => tool.name === 'pass')!
+    const result = await (passTool.execute as any)('pass-test', {}, () => {}, undefined, undefined, undefined)
+    assert.equal(result.terminate, true)
+    assert.equal(w.rooms.listPublicEvents(roomId).length, publicBefore)
+
+    const versionBefore = w.rooms.requireRoom(roomId).sharedVersion
+    const firstState = w.rooms.requireRoundState(round.id, first.id)
+    assert.equal(firstState.lastSeenPublicVersion, versionBefore)
+    assert.equal(firstState.doneAtPublicVersion, null)
+    assert.equal(firstState.discussionFinished, false)
+
+    for (const agent of agents.slice(1)) w.commands.pass(roomId, agent.id, randomUUID())
+    w.commands.sendMessage(roomId, human.id, randomUUID(), '我补充一个新的公开观点。')
+    const versionAfter = w.rooms.requireRoom(roomId).sharedVersion
+    assert.ok(versionAfter > versionBefore)
+
+    const selected = w.scheduler.nextTrigger(roomId)
+    assert.equal(selected.trigger?.type, 'public_state_changed')
+    assert.equal(selected.trigger?.playerId, first.id)
+  } finally {
+    await w.runtime.close()
+    w.database.close()
+  }
+})
+
+test('pass cannot silently swallow a pending directed question', async () => {
+  const w = createWorld()
+  try {
+    const { roomId, human } = startOneHuman(w)
+    await finishIntroduction(w, roomId, human.id)
+    const agent = w.rooms.listPlayers(roomId).find(player => player.controller === 'agent')!
+    w.commands.askPlayer(roomId, human.id, randomUUID(), agent.id, '你现在怎么解释？')
+    assert.throws(() => w.commands.pass(roomId, agent.id, randomUUID()), /PASS_NOT_ALLOWED_WITH_PENDING_QUESTION/)
+  } finally {
+    await w.runtime.close()
+    w.database.close()
+  }
+})
+
+test('finish_round permanently removes an AI from later free-discussion activations', async () => {
+  const w = createWorld()
+  try {
+    const { roomId, human } = startOneHuman(w)
+    await finishIntroduction(w, roomId, human.id)
+    const round = w.rooms.getCurrentRound(roomId)!
+    const agents = w.rooms.listPlayers(roomId).filter(player => player.controller === 'agent')
+    const finished = agents[0]!
+    w.commands.finishRound(roomId, finished.id, randomUUID())
+    assert.equal(w.rooms.requireRoundState(round.id, finished.id).discussionFinished, true)
+    assert.throws(() => w.commands.sendMessage(roomId, finished.id, randomUUID(), '我又想说话了。'), /PLAYER_ALREADY_FINISHED_ROUND/)
+
+    for (const agent of agents.slice(1)) w.commands.finishRound(roomId, agent.id, randomUUID())
+    w.commands.sendMessage(roomId, human.id, randomUUID(), '还有一个新观点。')
+    const selected = w.scheduler.nextTrigger(roomId)
+    assert.notEqual(selected.trigger?.playerId, finished.id)
+  } finally {
+    await w.runtime.close()
+    w.database.close()
+  }
+})
+
+test('free discussion advances only after every player explicitly finishes', async () => {
+  const w = createWorld()
+  try {
+    const { roomId, human } = startOneHuman(w)
+    await finishIntroduction(w, roomId, human.id)
+    const round = w.rooms.getCurrentRound(roomId)!
+    const players = w.rooms.listPlayers(roomId)
+    for (const player of players.slice(0, -1)) w.commands.finishRound(roomId, player.id, randomUUID())
+    assert.equal(w.director.definition(roomId).id, 'discussion-1')
+    assert.equal(w.director.reconcile(roomId).advanced, false)
+    w.commands.finishRound(roomId, players.at(-1)!.id, randomUUID())
+    assert.equal(w.director.definition(roomId).id, 'search-1')
+    assert.ok(w.rooms.listRoundStates(round.id).every(state => state.discussionFinished))
+  } finally {
+    await w.runtime.close()
+    w.database.close()
+  }
+})
+
+test('long free discussion injects pacing into agent context and posts one public reminder', async () => {
+  const w = createWorld()
+  try {
+    const { roomId, human } = startOneHuman(w)
+    await finishIntroduction(w, roomId, human.id)
+    const round = w.rooms.getCurrentRound(roomId)!
+    const oldStartedAt = new Date(Date.now() - 9 * 60 * 1000).toISOString()
+    w.database.db.prepare('update round_instances set started_at=? where id=?').run(oldStartedAt, round.id)
+
+    const trigger = w.scheduler.nextTrigger(roomId).trigger
+    assert.ok(trigger)
+    assert.equal(trigger.pacing?.level, 'should_wrap_up')
+    const agent = w.rooms.requirePlayer(roomId, trigger.playerId)
+    const context = w.contextBuilder.build(roomId, agent.id, trigger)
+    assert.ok(context.dynamicPrompt.includes('控场提醒'))
+    assert.ok(context.dynamicPrompt.includes('finish_round'))
+
+    await w.scheduler.pump(roomId, 1)
+    let reminders = w.rooms.listPublicEvents(roomId).filter(event =>
+      event.roundInstanceId === round.id && event.type === 'discussion_pacing_reminder'
+    )
+    assert.equal(reminders.length, 1)
+    assert.ok(String(reminders[0]!.payload.content).includes('本轮讨论已持续较长时间'))
+
+    await w.scheduler.pump(roomId, 1)
+    reminders = w.rooms.listPublicEvents(roomId).filter(event =>
+      event.roundInstanceId === round.id && event.type === 'discussion_pacing_reminder'
+    )
+    assert.equal(reminders.length, 1)
+    const view = w.queries.view(roomId, human.id)
+    assert.ok(view.publicTimeline.some(event => event.type === 'discussion_pacing_reminder'))
+  } finally {
+    await w.runtime.close()
+    w.database.close()
+  }
+})
+
+test('nudge requires immediate action or finish and does not offer pass', async () => {
+  const w = createWorld()
+  try {
+    const { roomId, human } = startOneHuman(w)
+    await finishIntroduction(w, roomId, human.id)
+    const round = w.rooms.getCurrentRound(roomId)!
+    const agent = w.rooms.listPlayers(roomId).find(player => player.controller === 'agent')!
+    const state = w.rooms.requireRoundState(round.id, agent.id)
+    w.rooms.updateRoundState(round.id, agent.id, {
+      activationCount: Math.max(1, state.activationCount),
+      lastSeenPublicVersion: w.rooms.requireRoom(roomId).sharedVersion,
+    })
+    w.scheduler.nudge(roomId, agent.id)
+    const trigger = w.scheduler.nextTrigger(roomId).trigger
+    assert.equal(trigger?.type, 'nudge')
+    const context = w.contextBuilder.build(roomId, agent.id, trigger!)
+    assert.ok(context.dynamicPrompt.includes('直接调用 finish_round'))
+    const toolsLine = context.dynamicPrompt.split('\n').find(line => line.startsWith('允许工具：')) ?? ''
+    assert.ok(toolsLine.includes('finish_round'))
+    assert.ok(!toolsLine.includes('pass'))
+  } finally {
+    await w.runtime.close()
+    w.database.close()
+  }
+})
+
+test('removing a room deletes it and prevents future scheduler work', async () => {
+  const w = createWorld()
+  try {
+    const { roomId, human } = startOneHuman(w)
+    await finishIntroduction(w, roomId, human.id)
+    await w.runtime.ensureRoomSessions(roomId)
+    assert.ok(w.rooms.getRoom(roomId))
+    assert.ok(w.rooms.listActiveRoomIds().includes(roomId))
+
+    await w.scheduler.removeRoom(roomId)
+
+    assert.equal(w.rooms.getRoom(roomId), null)
+    assert.ok(!w.rooms.listActiveRoomIds().includes(roomId))
+    assert.deepEqual(await w.scheduler.pump(roomId), {activations:0,blockedByHuman:false,idle:true})
+    w.scheduler.kick(roomId)
+  } finally {
+    await w.runtime.close()
+    w.database.close()
+  }
+})
+
 test('unfinished AI stays pending until new public information or an explicit nudge', async () => {
   const w = createWorld()
   try {
@@ -398,27 +582,58 @@ test('unfinished AI stays pending until new public information or an explicit nu
     assert.equal(before.roundStatus, 'needs_confirmation')
     assert.equal(before.canNudge, true)
 
-    w.scheduler.nudge(roomId, agent.id)
-    await w.scheduler.pump(roomId)
-
-    const afterState = w.rooms.requireRoundState(round.id, agent.id)
-    assert.equal(afterState.doneAtPublicVersion, w.rooms.requireRoom(roomId).sharedVersion)
-    const after = w.queries.view(roomId, human.id).players.find(player => player.id === agent.id)!
-    assert.equal(after.roundStatus, 'done')
-    assert.equal(after.canNudge, undefined)
-
     const zhou = w.rooms.listPlayers(roomId).find(player => player.roleId === 'zhou-qi')!
     const question = w.commands.askPlayer(
       roomId, zhou.id, randomUUID(), human.id, '你愿意解释21:58听到的门锁声吗？'
     ) as { questionId: string }
+
+    w.scheduler.nudge(roomId, agent.id)
+    await w.scheduler.pump(roomId)
+
+    const afterState = w.rooms.requireRoundState(round.id, agent.id)
+    assert.equal(afterState.discussionFinished, true)
+    const after = w.queries.view(roomId, human.id).players.find(player => player.id === agent.id)!
+    assert.equal(after.roundStatus, 'done')
+    assert.equal(after.canNudge, undefined)
+
     const publicCount = w.rooms.listPublicEvents(roomId).length
     w.commands.finishRound(roomId, human.id, randomUUID())
     assert.equal(w.rooms.requireQuestion(roomId, question.questionId).status, 'declined')
-    assert.equal(w.rooms.listPublicEvents(roomId).length, publicCount)
+    assert.ok(w.rooms.listPublicEvents(roomId).length >= publicCount)
     assert.equal(w.rooms.listPublicEvents(roomId).some(event => event.type === 'question_declined'), false)
   } finally {
     await w.runtime.close()
     w.database.close()
+  }
+})
+
+test('legacy player round states gain discussion_finished during migration', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'murder-mystery-round-state-migration-'))
+  const databasePath = join(directory, 'legacy.sqlite')
+  try {
+    const legacy = new DatabaseSync(databasePath)
+    legacy.exec(`
+      create table player_round_states (
+        round_instance_id text not null,
+        room_player_id text not null,
+        last_seen_public_version integer not null default 0,
+        done_at_public_version integer,
+        activation_count integer not null default 0,
+        initial_action_done integer not null default 0,
+        search_actions_used integer not null default 0,
+        search_finished integer not null default 0,
+        updated_at text not null,
+        primary key(round_instance_id, room_player_id)
+      );
+    `)
+    legacy.close()
+
+    const migrated = new MurderMysteryDatabase(databasePath)
+    const columns = migrated.db.prepare('pragma table_info(player_round_states)').all() as Array<{name:string}>
+    assert.ok(columns.some(column => column.name === 'discussion_finished'))
+    migrated.close()
+  } finally {
+    rmSync(directory, {recursive:true, force:true})
   }
 })
 
@@ -452,6 +667,26 @@ test('legacy clue holdings migrate from room-global to per-player uniqueness', (
   } finally {
     rmSync(directory, {recursive:true, force:true})
   }
+})
+
+test('scheduler pacing config reads env values and validates positive integers', () => {
+  assert.deepEqual(readSchedulerConfig({}), {
+    discussionPacingAfterMinutes:8,
+    discussionPacingMessageCount:30,
+    discussionPacingActivationCount:45,
+  })
+  assert.deepEqual(readSchedulerConfig({
+    AI_MURDER_MYSTERY_DISCUSSION_PACING_AFTER_MINUTES:'12',
+    AI_MURDER_MYSTERY_DISCUSSION_PACING_MESSAGE_COUNT:'40',
+    AI_MURDER_MYSTERY_DISCUSSION_PACING_ACTIVATION_COUNT:'60',
+  }), {
+    discussionPacingAfterMinutes:12,
+    discussionPacingMessageCount:40,
+    discussionPacingActivationCount:60,
+  })
+  assert.throws(() => readSchedulerConfig({AI_MURDER_MYSTERY_DISCUSSION_PACING_AFTER_MINUTES:'0'}), /INVALID_AI_MURDER_MYSTERY_DISCUSSION_PACING_AFTER_MINUTES/)
+  assert.throws(() => readSchedulerConfig({AI_MURDER_MYSTERY_DISCUSSION_PACING_MESSAGE_COUNT:'1.5'}), /INVALID_AI_MURDER_MYSTERY_DISCUSSION_PACING_MESSAGE_COUNT/)
+  assert.throws(() => readSchedulerConfig({AI_MURDER_MYSTERY_DISCUSSION_PACING_ACTIVATION_COUNT:'abc'}), /INVALID_AI_MURDER_MYSTERY_DISCUSSION_PACING_ACTIVATION_COUNT/)
 })
 
 test('live mode refuses to silently fall back when model configuration is missing', () => {

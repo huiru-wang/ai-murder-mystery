@@ -50,7 +50,7 @@ export class RoomQueryService {
         if(definition.type==='discussion') {
           if(definition.mode!=='free') {
             roundStatus=state.initialActionDone?'done':currentTurnId===player.id?'current':'waiting'
-          } else if(state.doneAtPublicVersion!==null&&state.doneAtPublicVersion>=room.sharedVersion) {
+          } else if(state.discussionFinished) {
             roundStatus='done'
           } else if(state.activationCount===0) {
             roundStatus='waiting'
@@ -249,7 +249,7 @@ export class RoomQueryService {
           if(definition.allowedTools.includes('decline_question')) actions.push('DECLINE_QUESTION')
         }
       }
-      if(definition.mode!=='ordered'&&state.doneAtPublicVersion!==null&&state.doneAtPublicVersion>=room.sharedVersion) {
+      if(definition.mode!=='ordered'&&state.discussionFinished) {
         return []
       }
       return actions

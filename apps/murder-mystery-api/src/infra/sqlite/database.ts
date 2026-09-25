@@ -80,6 +80,7 @@ export class MurderMysteryDatabase {
         room_player_id text not null,
         last_seen_public_version integer not null default 0,
         done_at_public_version integer,
+        discussion_finished integer not null default 0,
         activation_count integer not null default 0,
         initial_action_done integer not null default 0,
         search_actions_used integer not null default 0,
@@ -192,6 +193,11 @@ export class MurderMysteryDatabase {
       create index if not exists idx_pending_target on pending_interactions(room_id, to_player_id, status);
       create index if not exists idx_player_round_state on player_round_states(round_instance_id, room_player_id);
     `)
+
+    const roundStateColumns = this.db.prepare('pragma table_info(player_round_states)').all() as Array<{name:string}>
+    if (!roundStateColumns.some(column => column.name === 'discussion_finished')) {
+      this.db.exec('alter table player_round_states add column discussion_finished integer not null default 0')
+    }
 
     const holdingSchema = this.db.prepare(
       "select sql from sqlite_master where type='table' and name='clue_holdings'"

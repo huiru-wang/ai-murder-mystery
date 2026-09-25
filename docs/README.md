@@ -1,9 +1,16 @@
 # Documentation
 
-- [Product scope](./product/current-scope.md)
-- [Architecture](./architecture/overview.md)
-- [Gameplay domain](./domain/gameplay.md)
-- [Local development](./engineering/local-development.md)
-- [Configuration](./engineering/configuration.md)
-- [Testing](./engineering/testing.md)
-- [Deployment](./engineering/deployment.md)
+## 产品
+
+- [产品逻辑](./product/product.md) — 产品是什么、玩家如何完成一局游戏、AI 玩家在用户侧如何表现。
+
+## 核心架构
+
+- [整体架构](./architecture/overview.md) — Web、API、GameDirector、Scheduler、Player Agent、Tools 和 SQLite 的职责边界。
+- [AI Player 架构](./architecture/ai-player.md) — 独立 Agent Session、信息隔离、上下文构建、Tool 驱动行为、`pass` / `finish_round`。
+- [Game Runtime 与 Scheduler](./architecture/game-runtime.md) — 轮次状态机、Trigger 调度、自由讨论、软性控场和房间生命周期。
+
+## 工程
+
+- [开发、配置与测试](./engineering/development.md) — 本地启动、环境变量、live/mock 模式、SQLite 与验证命令。
+- [部署](./engineering/deployment.md) — 当前生产部署方式、Nginx、运行目录和重启限制。

@@ -7,7 +7,6 @@ export type PlayerAgentContext = {
   systemPrompt:string
   dynamicPrompt:string
   introductionText:string
-  discussionFallbackText:string
 }
 
 export class PlayerAgentContextBuilder {
@@ -28,6 +27,9 @@ export class PlayerAgentContextBuilder {
     const round=this.rooms.getCurrentRound(roomId)
     if(!round) throw new Error('NO_ACTIVE_ROUND')
     const definition=this.director.definition(roomId)
+    const agentAllowedTools=trigger.type==='nudge'
+      ? definition.allowedTools.filter(tool=>tool!=='pass')
+      : definition.allowedTools
     const players=this.rooms.listPlayers(roomId)
     const publicEvents=this.rooms.listPublicEvents(roomId)
     const holdings=this.rooms.listHoldings(roomId)
@@ -50,7 +52,19 @@ export class PlayerAgentContextBuilder {
       '绝不能创造剧本中不存在的人物、地点、物证、系统记录或已经发生的事实。',
       '不要机械重复自己已经公开说过的观点。被直接提问时，应针对具体问题回应；可以回答、部分回答、误导或明确拒绝。',
       '所有游戏行为必须通过工具完成。不要把普通模型文本当作对玩家可见的发言。',
-      '普通讨论中，如果当前没有值得说、问或公开的信息，调用 finish_round；搜证轮完成行动后调用 finish_search。自我介绍轮是例外：必须公开介绍自己一次，不能跳过。',
+      '每次被激活后，你必须至少调用一个当前允许的工具来结束这次行动。普通文本输出不会被其他玩家看到，也不会算作有效行动。',
+      '# 自由讨论的节奏与收敛',
+      '新的公共消息出现时，你可能会被再次唤醒。被唤醒不代表你必须公开发言。',
+      '阅读最新群聊和线索后，自主判断当前是否有值得公开的新内容。',
+      '只有当你有新的事实、推理、质疑、问题、澄清或策略性表达时，才使用公开行动工具。',
+      '如果当前没有新的信息增量，直接调用 pass。',
+      '不要为了保持聊天活跃而发言，也不要机械重复自己或他人已经公开表达过的观点。',
+      '不要通过 send_message 发送“没有补充”“我先听听”“暂时没什么要说”等无信息量内容。',
+      'pass 是静默动作，其他玩家看不到；它只表示你对当前公共状态没有要公开的内容。',
+      '即使之前调用过 pass，只要后来出现新的公共信息，你仍然可以再次被激活并重新判断。',
+      '只有当你认为自己这一整轮讨论已经完成，并且后续即使出现新消息也不再参与本轮时，才调用 finish_round。finish_round 一旦执行，本轮不会再次唤醒你。',
+      '被直接提问时不能 pass，必须 reply_question 或 decline_question。',
+      '搜证轮完成行动后调用 finish_search。自我介绍轮是例外：必须公开介绍自己一次，不能跳过。',
       '',
       '# 剧本公开背景',
       script.publicContext,
@@ -89,6 +103,7 @@ export class PlayerAgentContextBuilder {
       if(event.type==='question_declined') return ''
       if(event.type==='clue_revealed') return `#${event.seq} [公开线索] ${String(event.payload.title??'')}：${String(event.payload.content??'')}`
       if(event.type==='round_started') return `#${event.seq} [系统] 进入 ${String(event.payload.roundDefinitionId??'新轮次')}`
+      if(event.type==='discussion_pacing_reminder') return `#${event.seq} [系统控场] ${String(event.payload.content??'本轮讨论已持续较长时间，请适当收敛。')}`
       return `#${event.seq} [系统] ${event.type}`
     }).filter(Boolean)
 
@@ -113,9 +128,12 @@ export class PlayerAgentContextBuilder {
         ? '规则：这是自我介绍环节。你必须调用 send_message 公开介绍自己一次；成功发言后本人的介绍立即结束。不要提问，不要跳过。'
         : '',
       trigger.type==='nudge'
-        ? '真人玩家正在催促你确认本轮是否还有内容。请重新查看最新公共信息：有新的必要内容就行动；没有就直接调用 finish_round。不要为了回应催促而重复旧观点。'
+        ? '真人玩家正在催促你尽快完成本轮：如果还有值得公开的新内容，立即使用相应工具说出来；如果没有新的关键内容，直接调用 finish_round 结束本轮。催促状态下不要使用 pass，也不要为了拖延而重复旧观点。'
         : '',
-      `允许工具：${definition.allowedTools.join(', ')}`,
+      trigger.pacing?.level==='should_wrap_up'
+        ? `控场提醒：本轮已持续约 ${trigger.pacing.elapsedMinutes} 分钟，公开交流 ${trigger.pacing.publicMessageCount} 条，累计 AI 激活 ${trigger.pacing.activationCount} 次，已有 ${trigger.pacing.finishedPlayerCount}/${trigger.pacing.totalPlayerCount} 名玩家结束本轮。若你已经表达核心观点、没有新的关键事实或必须追问的问题，应倾向于调用 finish_round；如果仍有重要内容，可以继续讨论，不要为了结束而强行结束。`
+        : '',
+      `允许工具：${agentAllowedTools.join(', ')}`,
       '',
       '# 所有玩家公开身份',
       ...players.map(item=>{
@@ -147,13 +165,13 @@ export class PlayerAgentContextBuilder {
       ...(pendingText.length?pendingText:['- 暂无']),
       '',
       '根据当前信息和角色目标自主决定行动。被直接提问时优先处理对应 questionId。',
+      '重要：这次激活必须通过调用一个允许的工具结束。不要只输出普通文本；若当前不想公开行动，调用 pass。',
     ].filter(Boolean).join('\n')
 
     return {
       systemPrompt,
       dynamicPrompt,
       introductionText:`我是${role.name}，${role.occupation}。${role.publicProfile}`,
-      discussionFallbackText:`我先从案发前后的时间线入手。大家可以补充一下停电前后各自的位置和行动。`,
     }
   }
 }

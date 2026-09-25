@@ -5,10 +5,11 @@ import { RoomCommandService } from '../../../domain/room/commands.js'
 
 type ToolDetails = Record<string, unknown>
 
-function asResult(details:ToolDetails) {
+function asResult(details:ToolDetails,terminate=false) {
   return {
     content:[{type:'text' as const,text:JSON.stringify(details)}],
     details,
+    ...(terminate?{terminate:true}:{}),
   }
 }
 
@@ -18,6 +19,7 @@ function createTool<T extends TSchema>(
   description:string,
   parameters:T,
   execute:(params:Static<T>)=>ToolDetails|Promise<ToolDetails>,
+  terminate=false,
 ):AgentHarnessTool<ExecutionToolContext,T,ToolDetails> {
   return {
     name,
@@ -27,7 +29,7 @@ function createTool<T extends TSchema>(
     executionMode:'sequential',
     replay:'never',
     async execute(_toolCallId,params) {
-      return asResult(await execute(params))
+      return asResult(await execute(params),terminate)
     },
   }
 }
@@ -75,10 +77,18 @@ export function createPlayerTools(
       ()=>commands.yieldTurn(roomId,playerId,randomUUID()),
     ),
     createTool(
-      'finish_round','本轮无补充',
-      '确认基于目前最新公共信息，你没有新的补充、问题或行动。若之后出现新的公共信息，你可能再次被激活。',
+      'finish_round','结束本轮讨论',
+      '当你认为自己本轮讨论已经完成、后续即使有新消息也不再参与本轮时使用。执行后本轮不会再次激活你。若只是当前这条消息不想回应，应使用 pass。',
       Type.Object({}, {additionalProperties:false}),
       ()=>commands.finishRound(roomId,playerId,randomUUID()),
+      true,
+    ),
+    createTool(
+      'pass','静默不回应',
+      '当前公共状态下没有值得公开的新内容时使用。不会向群聊发送任何消息；执行后立即结束本次激活。之后出现新的公共信息时，你仍可再次被激活并重新判断。若有待回答的定向问题，不允许使用 pass。',
+      Type.Object({}, {additionalProperties:false}),
+      ()=>commands.pass(roomId,playerId,randomUUID()),
+      true,
     ),
     createTool(
       'search_clue','搜证',

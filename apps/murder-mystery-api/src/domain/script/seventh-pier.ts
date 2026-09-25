@@ -7,6 +7,7 @@ const discussionTools = [
   'decline_question',
   'yield_turn',
   'finish_round',
+  'pass',
 ] as const
 
 export const seventhPierV2: ScriptDefinition = {

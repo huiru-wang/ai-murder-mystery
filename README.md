@@ -1,12 +1,34 @@
 # AI Murder Mystery
 
-一款由 AI 玩家共同参与的在线剧本推理游戏。你可以创建房间、选择角色、阅读专属剧本，与其他玩家围绕线索展开讨论、提问、搜证和投票，最终揭开完整真相。
+AI Murder Mystery 是一个真人与独立 AI 玩家共同参与的在线剧本推理游戏。当前 Web 形态是单人即可开局：真人创建房间、选择角色后，其余席位由 AI Player 接管。每个 AI 都有自己的角色身份、私密信息、目标、线索与独立 Agent Session，会像真实玩家一样讨论、隐瞒、质询、搜证、投票并在合适的时候结束自己的本轮参与。
 
-## 体验内容
+当前内置六人剧本《第七码头》，完整流程包括：自我介绍、自由讨论、搜证、再次讨论、再次搜证、最终讨论、投票和真相复盘。
 
-内置剧本《第七码头》支持 6 人推理局。真人玩家确定角色后，剩余席位由 AI 补齐。AI 会依据公开信息和自己掌握的私密内容行动，不会预先知道其他角色的秘密或最终真相。
+## 核心设计
 
-游戏依次推进角色介绍、讨论、搜证、投票与真相复盘。私密剧本、未公开线索和投票结果只会在应当揭示的阶段展示。
+这个项目不是“一个 Chatbot 扮演所有角色”，而是由多个职责清晰的运行时组件共同驱动：
+
+- **AI Player**：每个 AI 玩家是独立 Agent，按 `(roomId, playerId)` 隔离 Session。
+- **Information Isolation**：AI 只能看到公共信息、自己的角色私密信息和自己获得的私有线索，不会看到其他角色秘密或最终真相。
+- **GameDirector**：确定性规则层，负责当前轮次、行动顺序、完成条件和阶段推进。
+- **Scheduler**：确定性控场器，负责判断何时应该再次激活哪个 AI，但不决定 AI 说什么。
+- **Context Builder**：每次 AI 激活时，根据当前房间状态构建动态上下文。
+- **Tool-driven Action**：AI 对游戏世界的所有有效动作都必须通过 Tool 完成，普通模型文本不会直接进入群聊。
+- **Persistent Session**：同一房间内每个 AI 拥有持续会话；房间之间完全隔离。
+
+详细设计见 [docs](./docs/README.md)。
+
+## 仓库结构
+
+```text
+apps/
+  murder-mystery-api/     Hono API、游戏规则、SQLite、Scheduler、AI Player Runtime
+  murder-mystery-web/     React/Vite Web 客户端
+packages/
+  murder-mystery-shared/  前后端共享 API 类型
+
+docs/                     产品与架构文档
+```
 
 ## 本地开发
 
@@ -18,43 +40,32 @@ cp apps/murder-mystery-api/.env.example apps/murder-mystery-api/.env
 pnpm start:local
 ```
 
-本地 Web 为 `http://127.0.0.1:5173`，API 为 `http://127.0.0.1:3200`。启动脚本会读取 API 目录下的 `.env`，并同时启动 API 与 Web；按 Ctrl+C 会一并停止它们。
+默认地址：
 
-`.env.example` 默认是 live 模式。填写 `DEEPSEEK_API_KEY` 后使用真实 AI；想无密钥体验完整流程，可将 `.env` 中的 `AI_MURDER_MYSTERY_AI_MODE` 改为 `mock`：
+- Web：`http://127.0.0.1:5173`
+- API：`http://127.0.0.1:3200`
+
+`.env.example` 默认使用 live 模式。填写对应 Provider 的 API Key 后使用真实模型；需要无密钥验证完整流程时，可将：
+
+```env
+AI_MURDER_MYSTERY_AI_MODE=mock
+```
+
+## 常用命令
 
 ```bash
 pnpm start:local
-```
-
-## 服务器部署
-
-服务器需安装 Node.js、pnpm、Nginx、curl 和 flock，并提供 sudo 权限。确认 SSL 证书覆盖 `ai-murder-mystery.robinverse.me`，且文件位于：
-
-```text
-/etc/nginx/ssl/robinverse.me.pem
-/etc/nginx/ssl/robinverse.me.key
-```
-
-在服务器上准备生产配置后部署：
-
-```bash
-cd /path/to/ai-murder-mystery
-pnpm install
-cp apps/murder-mystery-api/.env.example apps/murder-mystery-api/.env.production
-# 编辑 .env.production，填写真实模型配置和 API Key
-pnpm deploy
-```
-
-部署脚本会构建项目，发布 Web 到 `/var/www/ai-murder-mystery`，用 `nohup` 和 PID 文件启动本机 `3200` 端口的 API，并写入专用 Nginx 配置。它不使用 systemd；API 日志位于 `/var/lib/ai-murder-mystery/logs/api.log`。
-
-注意：脚本会替换 `/etc/nginx/nginx.conf`，因此服务器应只承载本项目。主机重启后需再次执行 `pnpm deploy`。
-
-## 验证
-
-```bash
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm deploy
 ```
 
-详细的架构、配置、测试和部署说明见 [docs](./docs/README.md)。
+## 文档
+
+- [产品逻辑](./docs/product/product.md)
+- [整体架构](./docs/architecture/overview.md)
+- [AI Player 架构](./docs/architecture/ai-player.md)
+- [Game Runtime 与 Scheduler](./docs/architecture/game-runtime.md)
+- [开发、配置与测试](./docs/engineering/development.md)
+- [部署](./docs/engineering/deployment.md)

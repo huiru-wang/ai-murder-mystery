@@ -52,6 +52,11 @@ export class RoomRepository {
     this.database.db.prepare('update rooms set status=?,updated_at=? where id=?').run(status, now(), roomId)
   }
 
+  deleteRoom(roomId:string) {
+    const result=this.database.db.prepare('delete from rooms where id=?').run(roomId)
+    if(result.changes===0) throw new Error('ROOM_NOT_FOUND')
+  }
+
   setCurrentRound(roomId: string, roundInstanceId: string | null) {
     this.database.db.prepare('update rooms set current_round_instance_id=?,updated_at=? where id=?')
       .run(roundInstanceId, now(), roomId)
@@ -167,8 +172,8 @@ export class RoomRepository {
   createRoundStates(roundId: string, playerIds: string[], sharedVersion: number) {
     const insert = this.database.db.prepare(`
       insert into player_round_states
-      (round_instance_id,room_player_id,last_seen_public_version,done_at_public_version,activation_count,initial_action_done,search_actions_used,search_finished,updated_at)
-      values (?,?,?,null,0,0,0,0,?)
+      (round_instance_id,room_player_id,last_seen_public_version,done_at_public_version,discussion_finished,activation_count,initial_action_done,search_actions_used,search_finished,updated_at)
+      values (?,?,?,null,0,0,0,0,0,?)
     `)
     const createdAt = now()
     for (const playerId of playerIds) insert.run(roundId, playerId, sharedVersion, createdAt)
@@ -189,6 +194,7 @@ export class RoomRepository {
   updateRoundState(roundId: string, playerId: string, patch: Partial<{
     lastSeenPublicVersion:number
     doneAtPublicVersion:number|null
+    discussionFinished:boolean
     activationCount:number
     initialActionDone:boolean
     searchActionsUsed:number
@@ -200,6 +206,7 @@ export class RoomRepository {
       update player_round_states set
         last_seen_public_version=?,
         done_at_public_version=?,
+        discussion_finished=?,
         activation_count=?,
         initial_action_done=?,
         search_actions_used=?,
@@ -209,6 +216,7 @@ export class RoomRepository {
     `).run(
       next.lastSeenPublicVersion,
       next.doneAtPublicVersion,
+      next.discussionFinished ? 1 : 0,
       next.activationCount,
       next.initialActionDone ? 1 : 0,
       next.searchActionsUsed,
@@ -504,6 +512,7 @@ export class RoomRepository {
       roundInstanceId:String(row.round_instance_id),roomPlayerId:String(row.room_player_id),
       lastSeenPublicVersion:Number(row.last_seen_public_version),
       doneAtPublicVersion:row.done_at_public_version===null?null:Number(row.done_at_public_version),
+      discussionFinished:Boolean(row.discussion_finished),
       activationCount:Number(row.activation_count),initialActionDone:Boolean(row.initial_action_done),
       searchActionsUsed:Number(row.search_actions_used),searchFinished:Boolean(row.search_finished),
       updatedAt:String(row.updated_at),

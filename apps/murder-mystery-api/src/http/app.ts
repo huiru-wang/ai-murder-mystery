@@ -63,6 +63,17 @@ export function createApp(deps:{
     } catch(error) { return fail(c,error,404) }
   })
 
+  app.delete('/api/rooms/:id',async c=>{
+    try {
+      const playerId=c.req.query('playerId')
+      if(!playerId) throw new Error('PLAYER_ID_REQUIRED')
+      const roomId=c.req.param('id')
+      human(roomId,playerId)
+      await deps.scheduler.removeRoom(roomId)
+      return c.json({ok:true})
+    } catch(error) { return fail(c,error,404) }
+  })
+
   app.post('/api/rooms/:id/select-role',async c=>{
     try {
       const body=await c.req.json<SelectRoleRequest>()

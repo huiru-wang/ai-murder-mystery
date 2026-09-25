@@ -111,6 +111,22 @@ export default function App(){
   const selectedTarget=otherPlayers.find(player=>player.id===targetPlayerId)??null
   const replyQuestion=room?.pendingQuestionsForMe.find(question=>question.id===replyQuestionId)??null
 
+  function showError(value:unknown){
+    setError(value instanceof Error?humanizeError(value.message):'操作失败')
+  }
+
+  function forgetRoom(ref:SessionRef){
+    setRoomRefs(current=>{
+      const next=current.filter(item=>item.roomId!==ref.roomId||item.playerId!==ref.playerId)
+      writeRoomIndex(next)
+      return next
+    })
+    const active=readSession(ACTIVE_ROOM_KEY)
+    if(active?.roomId===ref.roomId&&active.playerId===ref.playerId)localStorage.removeItem(ACTIVE_ROOM_KEY)
+    setSession(current=>current?.roomId===ref.roomId&&current.playerId===ref.playerId?null:current)
+    setRoom(current=>current?.id===ref.roomId?null:current)
+  }
+
   useEffect(()=>{
     void request<{items:ScriptSummary[]}>('/api/scripts')
       .then(result=>setScripts(result.items))
@@ -173,10 +189,6 @@ export default function App(){
     return()=>{cancelled=true;window.clearInterval(timer)}
   },[session,reviewRoleId])
 
-  function showError(value:unknown){
-    setError(value instanceof Error?humanizeError(value.message):'操作失败')
-  }
-
   async function act(fn:()=>Promise<RoomView|void>){
     setBusy(true)
     setError('')
@@ -199,16 +211,11 @@ export default function App(){
     setSession(ref)
   }
 
-  function forgetRoom(ref:SessionRef){
-    setRoomRefs(current=>{
-      const next=current.filter(item=>item.roomId!==ref.roomId||item.playerId!==ref.playerId)
-      writeRoomIndex(next)
-      return next
+  async function removeRoom(ref:SessionRef){
+    await act(async()=>{
+      await request<{ok:boolean}>(`/api/rooms/${ref.roomId}?playerId=${encodeURIComponent(ref.playerId)}`,{method:'DELETE'})
+      forgetRoom(ref)
     })
-    const active=readSession(ACTIVE_ROOM_KEY)
-    if(active?.roomId===ref.roomId&&active.playerId===ref.playerId)localStorage.removeItem(ACTIVE_ROOM_KEY)
-    setSession(current=>current?.roomId===ref.roomId&&current.playerId===ref.playerId?null:current)
-    setRoom(current=>current?.id===ref.roomId?null:current)
   }
 
   function resumeRoom(ref:SessionRef){
@@ -309,7 +316,7 @@ export default function App(){
       onScript={setScriptId}
       onCreate={createRoom}
       onResume={resumeRoom}
-      onForget={forgetRoom}
+      onForget={removeRoom}
       error={error}
     />
   }
@@ -438,7 +445,7 @@ function Landing({scripts,selectedScript,scriptId,busy,savedRooms,roomRefs,onScr
   onScript:(value:string)=>void
   onCreate:()=>void
   onResume:(ref:SessionRef)=>void
-  onForget:(ref:SessionRef)=>void
+  onForget:(ref:SessionRef)=>void|Promise<void>
   error:string
 }){
   return <main className="landing">
@@ -474,7 +481,7 @@ function Landing({scripts,selectedScript,scriptId,busy,savedRooms,roomRefs,onScr
               </div>
               <div className="saved-room-actions">
                 <button className="dark-small" onClick={()=>onResume(ref)}>继续</button>
-                <button className="ghost-small" onClick={()=>onForget(ref)}>移除记录</button>
+                <button className="ghost-small" disabled={busy} onClick={()=>void onForget(ref)}>移除房间</button>
               </div>
             </article>
           })}
@@ -611,7 +618,7 @@ function ChatView({room,onPlayer,onReplyQuestion}:{
 }){
   const useful=room.publicTimeline.filter(event=>[
     'room_started','round_started','round_completed','message_sent','question_asked','question_replied',
-    'clue_revealed','game_completed',
+    'clue_revealed','discussion_pacing_reminder','game_completed',
   ].includes(event.type))
   return <div className="chat-stream">
     <div className="case-thread-start">
@@ -642,7 +649,7 @@ function ChatEvent({event,room,onPlayer,onReplyQuestion}:{
   const actor=room.players.find(player=>player.id===event.actorPlayerId)
   const target=room.players.find(player=>player.id===event.targetPlayerId)
   const pending=room.pendingQuestionsForMe.find(question=>question.sourceEventId===event.id)
-  if(['room_started','round_started','round_completed','clue_revealed','game_completed'].includes(event.type)){
+  if(['room_started','round_started','round_completed','clue_revealed','discussion_pacing_reminder','game_completed'].includes(event.type)){
     return <div className={'system-event '+event.type}>
       <span>{systemEventIcon(event.type)}</span>
       <div><strong>{systemEventTitle(event)}</strong><p>{systemEventText(event)}</p></div>
@@ -854,16 +861,16 @@ function ActionDock(props:{
         <button className="send-button" disabled={busy||!props.message.trim()} onClick={props.onSend}>
           {isIntroduction?'完成介绍':'发送'}
         </button>
-        {!isIntroduction&&actions.has('FINISH_ROUND')&&<button className="finish-button" disabled={busy} onClick={props.onFinishRound}>本轮没有补充</button>}
+        {!isIntroduction&&actions.has('FINISH_ROUND')&&<button className="finish-button" disabled={busy} onClick={props.onFinishRound}>结束本轮讨论</button>}
       </div>:<div className="waiting-dock">
         <span className="wait-mark">{done?'✓':'·'}</span>
         <div>
           <strong>{isIntroduction
             ? done?'你已完成自我介绍':'等待轮到你介绍'
-            : done?'你已确认暂无补充':'等待其他玩家行动'}</strong>
+            : done?'你已结束本轮讨论':'等待其他玩家行动'}</strong>
           <p>{isIntroduction
             ? '每个人必须公开介绍一次，六人完成后自动进入第一轮讨论。'
-            : done?'出现新的公开信息后，你会重新获得行动机会。':'可以在上方玩家状态中查看谁还没有结束本轮。'}</p>
+            : done?'本轮后续的新消息不会再要求你参与。':'可以在上方玩家状态中查看谁还没有结束本轮。'}</p>
         </div>
         {props.activeTab!=='chat'&&<button onClick={props.onOpenChat}>返回群聊</button>}
       </div>}
@@ -875,7 +882,7 @@ function ActionDock(props:{
       <div className="dock-label"><span>搜证阶段</span><strong>选择一个地点</strong></div>
       <div className="search-locations">
         {room.locations.map(location=><button key={location.id} disabled={busy||!actions.has('SEARCH_CLUE')} onClick={()=>props.onSearch(location.id)}>
-          <strong>{location.name}</strong><small>{location.description}</small>
+          <strong className="search-location-name">{location.name}</strong><small>{location.description}</small>
         </button>)}
       </div>
       {actions.has('FINISH_SEARCH')&&<button className="finish-button" disabled={busy} onClick={props.onFinishSearch}>结束我的搜证</button>}
@@ -1029,9 +1036,16 @@ function TimelineReview({room}:{room:RoomView}){
   return <div className="review-scroll">
     <span className="kicker">PUBLIC EVENT LOG</span><h1>完整公开时间线</h1>
     <div className="review-timeline">
-      {room.publicTimeline.map(event=><div key={event.id} className="review-event">
-        <span>#{event.seq}</span><div><small>{event.actorName??'系统'}</small><p>{timelineText(event)}</p></div>
-      </div>)}
+      {room.publicTimeline.map(event=>{
+        const system=!event.actorName
+        return <div key={event.id} className={'review-event '+(system?'system':'role-message')}>
+          <span>#{event.seq}</span>
+          <div>
+            {system?<small className="review-system-label">系统</small>:<strong className="review-actor-name">{event.actorName}</strong>}
+            <p>{timelineText(event)}</p>
+          </div>
+        </div>
+      })}
     </div>
   </div>
 }
@@ -1104,7 +1118,7 @@ function roundModeLabel(mode?:string){
 
 function roundDescription(id:string,type:string,mode?:string){
   if(id==='introduction')return '依次获得行动机会，建立公开身份与第一印象。'
-  if(type==='discussion')return mode==='free'?'自由发言、定向质询；所有人确认无补充后结束。':'按剧本规则获得行动机会。'
+  if(type==='discussion')return mode==='free'?'自由发言、定向质询；所有玩家明确结束本轮后推进。':'按剧本规则获得行动机会。'
   if(type==='search')return '选择地点搜证；线索可能公开，也可能只属于持有人。'
   if(type==='vote')return '所有人独立密封提交最终判断。'
   if(type==='reveal')return '解除信息隔离，公布真相并进入复盘。'
@@ -1120,6 +1134,7 @@ function systemEventIcon(type:string){
   if(type==='clue_revealed')return '证'
   if(type==='round_started')return '始'
   if(type==='round_completed')return '终'
+  if(type==='discussion_pacing_reminder')return '控'
   if(type==='game_completed')return '真'
   return '局'
 }
@@ -1128,6 +1143,7 @@ function systemEventTitle(event:PublicTimelineEvent){
   if(event.type==='clue_revealed')return `公开线索 · ${String(event.payload.title??'')}`
   if(event.type==='round_started')return roundLabel(String(event.payload.roundDefinitionId??''))
   if(event.type==='round_completed')return `${roundLabel(String(event.payload.roundDefinitionId??''))}结束`
+  if(event.type==='discussion_pacing_reminder')return '控场提醒'
   if(event.type==='game_completed')return '案件结束'
   if(event.type==='room_started')return '游戏开始'
   return event.type
@@ -1137,6 +1153,7 @@ function systemEventText(event:PublicTimelineEvent){
   if(event.type==='clue_revealed')return String(event.payload.content??'')
   if(event.type==='round_started')return '新的阶段已经开始，所有玩家获得该阶段允许的行动。'
   if(event.type==='round_completed')return '所有完成条件已经满足，控场推进到下一阶段。'
+  if(event.type==='discussion_pacing_reminder')return String(event.payload.content??'本轮讨论已持续较长时间，请适当收敛。')
   if(event.type==='game_completed')return '信息隔离已解除，可以进入完整复盘。'
   if(event.type==='room_started')return '所有角色就位，案件正式开始。'
   return ''
