@@ -1,0 +1,17 @@
+{
+  "name": "ai-murder-mystery",
+  "private": true,
+  "packageManager": "pnpm@10.11.0",
+  "scripts": {
+    "dev:api": "pnpm --filter @ai-murder-mystery/api dev",
+    "dev:web": "pnpm --filter @ai-murder-mystery/web dev",
+    "start:local": "bash scripts/start-local.sh",
+    "build": "pnpm --filter @ai-murder-mystery/shared build && pnpm --filter @ai-murder-mystery/api build && pnpm --filter @ai-murder-mystery/web build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @ai-murder-mystery/api test",
+    "deploy": "bash deploy/manual/deploy.sh"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

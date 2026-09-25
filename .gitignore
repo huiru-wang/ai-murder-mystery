@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.production
+.env.*.local
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
+logs/
+run/
+*.tsbuildinfo
+.DS_Store

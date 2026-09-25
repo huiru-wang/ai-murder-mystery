@@ -1,0 +1,7 @@
+:root{font-family:Inter,"PingFang SC","Microsoft YaHei",system-ui,-apple-system,"Segoe UI",sans-serif;font-synthesis:none;text-rendering:optimizeLegibility;color-scheme:dark}
+html,body,#root{margin:0;width:100%;min-width:320px;min-height:100%}
+body{min-height:100vh;overflow-x:hidden}
+h1,h2,h3,p{margin-top:0}
+button,input,textarea{font-family:inherit}
+::selection{background:#b99a6a;color:#17191a}
+*{scrollbar-width:thin;scrollbar-color:#b3aa9c transparent}
