@@ -17,5 +17,5 @@
 
 ## 工程
 
-- [开发、配置与测试](./engineering/development.md) — 本地启动、环境变量、live/mock 模式、SQLite 与验证命令。
+- [开发、配置与测试](./engineering/development.md) — 本地启动、真实模型配置、SQLite 与验证命令。
 - [部署](./engineering/deployment.md) — 当前生产部署方式、Nginx、运行目录和重启限制。

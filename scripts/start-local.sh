@@ -9,8 +9,6 @@ if [[ -f "$ENV_FILE" ]]; then
   source "$ENV_FILE"
   set +a
 fi
-export AI_MURDER_MYSTERY_AI_MODE="${AI_MURDER_MYSTERY_AI_MODE:-live}"
-
 cleanup() {
   kill "$API_PID" 2>/dev/null || true
   kill "$WEB_PID" 2>/dev/null || true

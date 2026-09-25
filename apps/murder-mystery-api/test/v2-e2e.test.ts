@@ -13,14 +13,83 @@ import { RoomRepository } from '../src/domain/room/repository.js'
 import { GameDirector, shuffledTurnOrder } from '../src/domain/round/director.js'
 import { ScriptRepository } from '../src/domain/script/repository.js'
 import { ScriptPackageImporter } from '../src/domain/script/importer.js'
-import { assertLiveModelConfigured, readSchedulerConfig } from '../src/infra/config/ai.js'
+import { assertModelConfigured, readSchedulerConfig } from '../src/infra/config/ai.js'
 import { MurderMysteryDatabase } from '../src/infra/sqlite/database.js'
 import { PlayerAgentContextBuilder } from '../src/runtime/player-agent/context-builder.js'
-import { MockPlayerAgentRuntime } from '../src/runtime/player-agent/runtime.js'
+import type { PlayerAgentRuntime } from '../src/runtime/player-agent/runtime.js'
+import type { AgentTrigger } from '../src/runtime/player-agent/trigger.js'
 import { createPlayerTools } from '../src/runtime/player-agent/tools/index.js'
 import { RoomScheduler } from '../src/runtime/scheduler/room-scheduler.js'
 
 const seventhPierPackage=resolve(dirname(fileURLToPath(import.meta.url)),'../../../data/scripts/第七码头.zip')
+
+class FixturePlayerAgentRuntime implements PlayerAgentRuntime {
+  constructor(
+    private readonly rooms:RoomRepository,
+    private readonly scripts:ScriptRepository,
+    private readonly director:GameDirector,
+    private readonly commands:RoomCommandService,
+  ) {}
+
+  assertReady() {}
+
+  async ensureRoomSessions(roomId:string) {
+    for(const player of this.rooms.listPlayers(roomId).filter(item=>item.controller==='agent')) {
+      if(this.rooms.getAgentSessionBinding(roomId,player.id)) continue
+      this.rooms.createAgentSessionBinding({
+        roomId,playerId:player.id,runtimeSessionId:`test-${randomUUID()}`,agentRevision:'test-runtime',
+      })
+    }
+  }
+
+  async run(trigger:AgentTrigger) {
+    const room=this.rooms.requireRoom(trigger.roomId)
+    const player=this.rooms.requirePlayer(trigger.roomId,trigger.playerId)
+    if(player.controller!=='agent'||!player.roleId) throw new Error('NOT_AGENT_PLAYER')
+    const round=this.rooms.getCurrentRound(trigger.roomId)
+    if(!round) throw new Error('NO_ACTIVE_ROUND')
+    const definition=this.director.definition(trigger.roomId)
+    const script=this.scripts.getByVersionId(room.scriptVersionId)!
+    const role=script.roles.find(item=>item.id===player.roleId)!
+    const state=this.rooms.requireRoundState(round.id,player.id)
+
+    if(definition.type==='discussion') {
+      const pending=this.rooms.listPendingQuestions(trigger.roomId).find(question=>question.toPlayerId===player.id)
+      if(pending) {
+        this.commands.replyQuestion(trigger.roomId,player.id,randomUUID(),pending.id,role.knownFacts[0]??'我目前没有更多可确认的信息。')
+      } else if(state.activationCount===0) {
+        const message=definition.requiredAction==='introduce'
+          ? `我是${role.name}，${role.occupation}。${role.publicProfile}`
+          : role.knownFacts[0]??'我会继续观察。'
+        this.commands.sendMessage(trigger.roomId,player.id,randomUUID(),message)
+      }
+      if(definition.mode==='free') this.commands.finishRound(trigger.roomId,player.id,randomUUID())
+      return
+    }
+
+    if(definition.type==='search') {
+      const owned=new Set(this.rooms.listHoldings(trigger.roomId).filter(item=>item.roomPlayerId===player.id).map(item=>item.clueId))
+      const clue=script.clues.find(item=>item.roundId===definition.id&&!owned.has(item.id))
+      if(clue&&state.searchActionsUsed<definition.actionsPerPlayer) {
+        const result=this.commands.searchClue(trigger.roomId,player.id,randomUUID(),clue.locationId) as {holdingId:string}
+        const holding=this.rooms.requireHolding(trigger.roomId,result.holdingId)
+        if(holding.state==='private') this.commands.revealClue(trigger.roomId,player.id,randomUUID(),holding.id)
+      }
+      if(this.rooms.requireRoundState(round.id,player.id).searchActionsUsed>=definition.actionsPerPlayer||!clue) {
+        this.commands.finishSearch(trigger.roomId,player.id,randomUUID())
+      }
+      return
+    }
+
+    if(definition.type==='vote') {
+      const target=script.roles.find(candidate=>candidate.id!==role.id)?.id??role.id
+      this.commands.submitVote(trigger.roomId,player.id,randomUUID(),target,'test vote')
+    }
+  }
+
+  async abortRoom(_roomId:string) {}
+  async close() {}
+}
 
 function createWorld() {
   const database = new MurderMysteryDatabase(':memory:')
@@ -32,7 +101,7 @@ function createWorld() {
   const commands = new RoomCommandService(rooms, scripts, director)
   const queries = new RoomQueryService(rooms, scripts, director)
   const contextBuilder = new PlayerAgentContextBuilder(rooms, scripts, director)
-  const runtime = new MockPlayerAgentRuntime(rooms, scripts, director, commands)
+  const runtime = new FixturePlayerAgentRuntime(rooms, scripts, director, commands)
   const scheduler = new RoomScheduler(rooms, director, runtime)
   return { database, scripts, rooms, director, commands, queries, contextBuilder, runtime, scheduler }
 }
@@ -748,10 +817,9 @@ test('scheduler pacing config reads env values and validates positive integers',
   assert.throws(() => readSchedulerConfig({AI_MURDER_MYSTERY_DISCUSSION_PACING_ACTIVATION_COUNT:'abc'}), /INVALID_AI_MURDER_MYSTERY_DISCUSSION_PACING_ACTIVATION_COUNT/)
 })
 
-test('live mode refuses to silently fall back when model configuration is missing', () => {
+test('API requires a configured model key', () => {
   assert.throws(
-    () => assertLiveModelConfigured({
-      mode: 'live',
+    () => assertModelConfigured({
       provider: 'deepseek',
       model: 'deepseek-v4-pro',
       agentDbPath: ':memory:',

@@ -11,7 +11,7 @@ import { GameDirector } from './domain/round/director.js'
 import { RoomCommandService } from './domain/room/commands.js'
 import { RoomQueryService } from './domain/room/queries.js'
 import { PlayerAgentContextBuilder } from './runtime/player-agent/context-builder.js'
-import { LivePlayerAgentRuntime, MockPlayerAgentRuntime } from './runtime/player-agent/runtime.js'
+import { LivePlayerAgentRuntime } from './runtime/player-agent/runtime.js'
 import { RoomScheduler } from './runtime/scheduler/room-scheduler.js'
 import { createApp } from './http/app.js'
 
@@ -42,9 +42,7 @@ const contextBuilder=new PlayerAgentContextBuilder(rooms,scripts,director)
 
 const config=readAiConfig()
 config.agentDbPath=absolute(process.env.AI_MURDER_MYSTERY_AGENT_DB,'data/agent.sqlite')
-const runtime=config.mode==='mock'
-  ? new MockPlayerAgentRuntime(rooms,scripts,director,commands)
-  : new LivePlayerAgentRuntime(config,rooms,commands,contextBuilder,director)
+const runtime=new LivePlayerAgentRuntime(config,rooms,commands,contextBuilder,director)
 const schedulerConfig=readSchedulerConfig()
 const scheduler=new RoomScheduler(rooms,director,runtime,schedulerConfig)
 const app=createApp({rooms,commands,queries,runtime,scheduler,importer})
@@ -54,7 +52,7 @@ runtime.assertReady()
 const port=Number(process.env.AI_MURDER_MYSTERY_API_PORT??3200)
 if(!Number.isInteger(port)||port<1||port>65535) throw new Error('INVALID_PORT')
 const server=serve({fetch:app.fetch,hostname:'127.0.0.1',port},info=>{
-  console.log(`MurderMystery V2 API listening on http://127.0.0.1:${info.port}; aiMode=${config.mode}; model=${config.provider}/${config.model}`)
+  console.log(`MurderMystery V2 API listening on http://127.0.0.1:${info.port}; model=${config.provider}/${config.model}`)
   scheduler.resumeActiveRooms()
 })
 

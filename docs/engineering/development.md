@@ -5,6 +5,11 @@
 ```bash
 pnpm install
 cp apps/murder-mystery-api/.env.example apps/murder-mystery-api/.env
+```
+
+然后编辑 `apps/murder-mystery-api/.env`，填写所选 Provider 的真实 API Key，再启动：
+
+```bash
 pnpm start:local
 ```
 
@@ -22,27 +27,7 @@ pnpm dev:api
 pnpm dev:web
 ```
 
-## AI 模式
-
-### live
-
-调用真实模型：
-
-```env
-AI_MURDER_MYSTERY_AI_MODE=live
-```
-
-必须同时配置有效的 Provider、Model 和对应 API Key。
-
-### mock
-
-用于本地和自动化测试，不调用外部模型：
-
-```env
-AI_MURDER_MYSTERY_AI_MODE=mock
-```
-
-Mock Runtime 会按确定性策略完成完整游戏流程。
+API 只支持真实模型运行。Provider、Model 或 API Key 缺失时会在启动阶段直接失败，不会切换到本地替身。
 
 ## 环境变量
 
@@ -67,16 +52,13 @@ AI_MURDER_MYSTERY_SCRIPT_PACKAGE_DIR=data/scripts
 ### 模型
 
 ```env
-# AI 运行模式。live=调用真实模型；mock=使用本地 Mock Agent，主要用于测试。默认值：live。
-AI_MURDER_MYSTERY_AI_MODE=live
-
 # AI 模型 Provider，必须与 Pi 模型目录中的 provider id 一致，例如 deepseek。默认值：deepseek。
 AI_MURDER_MYSTERY_MODEL_PROVIDER=deepseek
 
 # AI 模型名称，必须是当前 Pi 模型目录中存在的 model id，例如 deepseek-v4-flash 或 deepseek-v4-pro。
 AI_MURDER_MYSTERY_MODEL_NAME=deepseek-v4-pro
 
-# DeepSeek API Key。仅在 Provider=deepseek 且 AI_MODE=live 时使用；请勿提交真实密钥到 Git。
+# DeepSeek API Key。必须填写真实 Key；请勿提交真实密钥到 Git。
 DEEPSEEK_API_KEY=
 ```
 
@@ -135,7 +117,7 @@ pnpm build
 pnpm --filter @ai-murder-mystery/web lint
 ```
 
-API E2E 使用 Mock Agent，不依赖外部 Provider。
+API 测试使用仅存在于测试代码中的确定性替身，不会提供任何可配置的本地运行模式。
 
 涉及以下行为的修改必须有回归测试：
 

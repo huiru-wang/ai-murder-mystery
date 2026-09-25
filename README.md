@@ -26,6 +26,17 @@ git clone git@github.com:huiru-wang/ai-murder-mystery.git
 cd ai-murder-mystery
 pnpm install
 cp apps/murder-mystery-api/.env.example apps/murder-mystery-api/.env
+```
+
+打开 `apps/murder-mystery-api/.env`，填写真实模型 Key，例如：
+
+```env
+DEEPSEEK_API_KEY=你的_API_Key
+```
+
+再启动项目：
+
+```bash
 pnpm start:local
 ```
 
@@ -34,11 +45,7 @@ pnpm start:local
 - Web：`http://127.0.0.1:5173`
 - API：`http://127.0.0.1:3200`
 
-填写模型 Provider 的 API Key 后即可使用真实 AI。若只想体验流程，可在 `.env` 中设置：
-
-```env
-AI_MURDER_MYSTERY_AI_MODE=mock
-```
+未配置有效 Key 时，API 不会启动。
 
 ## 常用操作
 

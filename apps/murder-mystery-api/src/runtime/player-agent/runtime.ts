@@ -15,8 +15,7 @@ import { createNodeSqliteFactory, SqliteSessionRepo } from '@earendil-works/pi-s
 import { RoomRepository } from '../../domain/room/repository.js'
 import { RoomCommandService } from '../../domain/room/commands.js'
 import { GameDirector } from '../../domain/round/director.js'
-import { ScriptRepository } from '../../domain/script/repository.js'
-import { assertLiveModelConfigured, type MurderMysteryAiConfig } from '../../infra/config/ai.js'
+import { assertModelConfigured, type MurderMysteryAiConfig } from '../../infra/config/ai.js'
 import { PlayerAgentContextBuilder } from './context-builder.js'
 import type { AgentTrigger } from './trigger.js'
 import { createPlayerTools } from './tools/index.js'
@@ -62,7 +61,7 @@ export class LivePlayerAgentRuntime implements PlayerAgentRuntime {
   }
 
   assertReady() {
-    assertLiveModelConfigured(this.config)
+    assertModelConfigured(this.config)
     if(!this.models.getModel(this.config.provider,this.config.model)) {
       throw new Error(`MODEL_NOT_IN_CATALOG: ${this.config.provider}/${this.config.model}`)
     }
@@ -253,85 +252,4 @@ export class LivePlayerAgentRuntime implements PlayerAgentRuntime {
       throw error
     }
   }
-}
-
-export class MockPlayerAgentRuntime implements PlayerAgentRuntime {
-  constructor(
-    private readonly rooms:RoomRepository,
-    private readonly scripts:ScriptRepository,
-    private readonly director:GameDirector,
-    private readonly commands:RoomCommandService,
-  ) {}
-
-  assertReady() {}
-
-  async ensureRoomSessions(roomId:string) {
-    for(const player of this.rooms.listPlayers(roomId).filter(item=>item.controller==='agent')) {
-      if(this.rooms.getAgentSessionBinding(roomId,player.id)) continue
-      this.rooms.createAgentSessionBinding({
-        roomId,playerId:player.id,runtimeSessionId:`mock-${randomUUID()}`,agentRevision:'mock-v2',
-      })
-    }
-  }
-
-  async run(trigger:AgentTrigger) {
-    const room=this.rooms.requireRoom(trigger.roomId)
-    const player=this.rooms.requirePlayer(trigger.roomId,trigger.playerId)
-    if(player.controller!=='agent'||!player.roleId) throw new Error('NOT_AGENT_PLAYER')
-    const round=this.rooms.getCurrentRound(trigger.roomId)
-    if(!round) throw new Error('NO_ACTIVE_ROUND')
-    const definition=this.director.definition(trigger.roomId)
-    const script=this.scripts.getByVersionId(room.scriptVersionId)!
-    const role=script.roles.find(item=>item.id===player.roleId)!
-    const state=this.rooms.requireRoundState(round.id,player.id)
-
-    if(definition.type==='discussion') {
-      const pending=this.rooms.listPendingQuestions(trigger.roomId).find(question=>question.toPlayerId===player.id)
-      if(pending) {
-        const fact=role.knownFacts[0]??'我现在能确认的信息不多。'
-        this.commands.replyQuestion(
-          trigger.roomId,player.id,randomUUID(),pending.id,
-          `针对你的问题，我目前能确认的是：${fact}`,
-        )
-      } else if(state.activationCount===0) {
-        const message=definition.requiredAction==='introduce'
-          ? `我是${role.name}，${role.occupation}。${role.publicProfile}`
-          : `${role.knownFacts[0]??'我先根据目前公开信息继续观察。'}`
-        this.commands.sendMessage(trigger.roomId,player.id,randomUUID(),message)
-      }
-      if(definition.mode==='free') {
-        this.commands.finishRound(trigger.roomId,player.id,randomUUID())
-      }
-      return
-    }
-
-    if(definition.type==='search') {
-      const holdings=this.rooms.listHoldings(trigger.roomId)
-      const ownedByPlayer=new Set(
-        holdings.filter(item=>item.roomPlayerId===player.id).map(item=>item.clueId)
-      )
-      const clue=script.clues.find(item=>item.roundId===definition.id&&!ownedByPlayer.has(item.id))
-      if(clue&&state.searchActionsUsed<definition.actionsPerPlayer) {
-        const result=this.commands.searchClue(trigger.roomId,player.id,randomUUID(),clue.locationId) as {holdingId:string}
-        const holding=this.rooms.requireHolding(trigger.roomId,result.holdingId)
-        if(holding.state==='private') {
-          this.commands.revealClue(trigger.roomId,player.id,randomUUID(),holding.id)
-        }
-      }
-      const latest=this.rooms.requireRoundState(round.id,player.id)
-      if(latest.searchActionsUsed>=definition.actionsPerPlayer||!clue) {
-        this.commands.finishSearch(trigger.roomId,player.id,randomUUID())
-      }
-      return
-    }
-
-    if(definition.type==='vote') {
-      const target=script.roles.find(candidate=>candidate.id!==role.id)?.id??role.id
-      this.commands.submitVote(trigger.roomId,player.id,randomUUID(),target,'mock vote')
-    }
-  }
-
-  async abortRoom(_roomId:string) {}
-
-  async close() {}
 }
