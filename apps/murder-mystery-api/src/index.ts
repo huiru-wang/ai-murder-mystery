@@ -1,9 +1,11 @@
 import { dirname, isAbsolute, resolve } from 'node:path'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { serve } from '@hono/node-server'
 import { MurderMysteryDatabase } from './infra/sqlite/database.js'
 import { readAiConfig, readSchedulerConfig } from './infra/config/ai.js'
 import { ScriptRepository } from './domain/script/repository.js'
+import { ScriptPackageImporter } from './domain/script/importer.js'
 import { RoomRepository } from './domain/room/repository.js'
 import { GameDirector } from './domain/round/director.js'
 import { RoomCommandService } from './domain/room/commands.js'
@@ -21,7 +23,17 @@ const absolute=(value:string|undefined,fallback:string)=>{
 }
 
 const database=new MurderMysteryDatabase(absolute(process.env.AI_MURDER_MYSTERY_SQLITE_PATH,'data/game.sqlite'))
-const scripts=new ScriptRepository()
+const scripts=new ScriptRepository(database)
+const importer=new ScriptPackageImporter(scripts)
+const resourceDirectory=process.env.AI_MURDER_MYSTERY_SCRIPT_PACKAGE_DIR
+if(resourceDirectory) {
+  const directory=absolute(resourceDirectory,resourceDirectory)
+  if(existsSync(directory)) {
+    for(const file of readdirSync(directory).filter(name=>name.endsWith('.zip'))) {
+      importer.importZip(readFileSync(resolve(directory,file)))
+    }
+  }
+}
 const rooms=new RoomRepository(database)
 const director=new GameDirector(rooms,scripts)
 const commands=new RoomCommandService(rooms,scripts,director)
@@ -35,7 +47,7 @@ const runtime=config.mode==='mock'
   : new LivePlayerAgentRuntime(config,rooms,commands,contextBuilder,director)
 const schedulerConfig=readSchedulerConfig()
 const scheduler=new RoomScheduler(rooms,director,runtime,schedulerConfig)
-const app=createApp({rooms,commands,queries,runtime,scheduler})
+const app=createApp({rooms,commands,queries,runtime,scheduler,importer})
 
 runtime.assertReady()
 

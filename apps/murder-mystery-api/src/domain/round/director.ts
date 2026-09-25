@@ -45,7 +45,7 @@ export class GameDirector {
         roundInstanceId:active.id,
         type:'round_completed',
         visibility:'public',
-        payload:{roundDefinitionId:definition.id,roundIndex:active.roundIndex},
+        payload:{roundDefinitionId:definition.id,title:definition.title,roundIndex:active.roundIndex},
       })
     })
 
@@ -128,10 +128,9 @@ export class GameDirector {
       const definition=script.rounds[roundIndex]
       if(!definition) throw new Error('ROUND_DEFINITION_NOT_FOUND')
       const players=this.rooms.listPlayers(roomId)
-      const ordered=definition.type==='discussion' && definition.mode!=='free'
       const seatOrder=players.map(player=>player.id)
-      const turnOrder=ordered
-        ? definition.id==='introduction'
+      const turnOrder=definition.type==='discussion'&&definition.mode!=='free'
+        ? definition.turnOrder==='random'
           ? shuffledTurnOrder(seatOrder)
           : seatOrder
         : []
@@ -151,6 +150,7 @@ export class GameDirector {
         visibility:'public',
         payload:{
           roundDefinitionId:definition.id,
+          title:definition.title,
           roundIndex,
           roundType:definition.type,
           mode:definition.type==='discussion'?definition.mode:undefined,

@@ -16,6 +16,7 @@ import type {
 import { RoomCommandService } from '../domain/room/commands.js'
 import { RoomQueryService } from '../domain/room/queries.js'
 import { RoomRepository } from '../domain/room/repository.js'
+import { ScriptPackageImporter } from '../domain/script/importer.js'
 import type { PlayerAgentRuntime } from '../runtime/player-agent/runtime.js'
 import { RoomScheduler } from '../runtime/scheduler/room-scheduler.js'
 
@@ -25,6 +26,7 @@ export function createApp(deps:{
   queries:RoomQueryService
   runtime:PlayerAgentRuntime
   scheduler:RoomScheduler
+  importer:ScriptPackageImporter
 }) {
   const app=new Hono()
   app.use('*',cors())
@@ -44,6 +46,19 @@ export function createApp(deps:{
 
   app.get('/health',c=>c.json({ok:true}))
   app.get('/api/scripts',c=>c.json({items:deps.queries.listScripts()}))
+
+  app.post('/api/scripts/import',async c=>{
+    try {
+      const form=await c.req.formData()
+      const file=form.get('package')
+      if(!(file instanceof File)||!file.name.endsWith('.zip')) throw new Error('SCRIPT_PACKAGE_REQUIRED')
+      const script=deps.importer.importZip(Buffer.from(await file.arrayBuffer()))
+      return c.json({item:{
+        id:script.id,version:script.version,title:script.title,description:script.description,
+        playerCount:script.roles.length,publicContext:script.publicContext,
+      }},201)
+    } catch(error) { return fail(c,error) }
+  })
 
   app.post('/api/rooms',async c=>{
     try {

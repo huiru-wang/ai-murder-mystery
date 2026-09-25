@@ -44,23 +44,29 @@ export interface LocationDefinition {
 export type RoundDefinition =
   | {
       id: string
+      title: string
       type: 'discussion'
       mode: DiscussionMode
+      requiredAction?: 'introduce'
+      turnOrder?: 'random' | 'seat'
       allowedTools: GameToolName[]
     }
   | {
       id: string
+      title: string
       type: 'search'
       actionsPerPlayer: number
       allowedTools: GameToolName[]
     }
   | {
       id: string
+      title: string
       type: 'vote'
       allowedTools: ['submit_vote']
     }
   | {
       id: string
+      title: string
       type: 'reveal'
       allowedTools: []
     }

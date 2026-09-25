@@ -133,8 +133,10 @@ export class RoomQueryService {
       currentRound:round&&definition?{
         id:round.id,
         definitionId:round.roundDefinitionId,
+        title:definition.title,
         type:round.type,
         ...(definition.type==='discussion'?{mode:definition.mode}:{}),
+        ...(definition.type==='discussion'&&definition.requiredAction?{requiredAction:definition.requiredAction}:{}),
         index:round.roundIndex,
         status:round.status,
         sharedVersionAtStart:round.publicVersionAtStart,
@@ -148,7 +150,7 @@ export class RoomQueryService {
       locations:script.locations.map(location=>({...location})),
       publicRoles,
       roundPlan:script.rounds.map((item,index)=>({
-        id:item.id,
+        id:item.id,title:item.title,
         type:item.type,
         ...(item.type==='discussion'?{mode:item.mode}:{}),
         index,

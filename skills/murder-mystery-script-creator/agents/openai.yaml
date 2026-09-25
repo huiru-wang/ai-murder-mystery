@@ -1,0 +1,4 @@
+interface:
+  display_name: "剧本创作"
+  short_description: "通过对话创作并校验可导入的推理剧本包"
+  default_prompt: "Use $murder-mystery-script-creator to turn my mystery idea into a validated script package."

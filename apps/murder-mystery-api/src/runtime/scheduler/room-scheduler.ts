@@ -224,14 +224,16 @@ export class RoomScheduler {
     const shouldWrap=elapsedMs>=this.config.discussionPacingAfterMinutes*60_000
       || publicMessageCount>=this.config.discussionPacingMessageCount
       || activationCount>=this.config.discussionPacingActivationCount
-    if(!shouldWrap) return undefined
     return {
-      level:'should_wrap_up',
-      elapsedMinutes:Math.max(1,Math.floor(elapsedMs/60_000)),
+      level:shouldWrap?'should_wrap_up':'within_limit',
+      elapsedMinutes:Math.floor(elapsedMs/60_000),
       publicMessageCount,
       activationCount,
       finishedPlayerCount,
       totalPlayerCount:states.length,
+      limitMinutes:this.config.discussionPacingAfterMinutes,
+      limitPublicMessages:this.config.discussionPacingMessageCount,
+      limitAgentActivations:this.config.discussionPacingActivationCount,
     }
   }
 
@@ -254,7 +256,7 @@ export class RoomScheduler {
       return
     }
     const pacing=this.discussionPacing(roomId)
-    if(!pacing) {
+    if(!pacing||pacing.level==='within_limit') {
       if(!this.pacingTimers.has(roomId)) {
         const elapsedMs=Math.max(0,Date.now()-Date.parse(round.startedAt))
         const delay=Math.max(1000,this.config.discussionPacingAfterMinutes*60_000-elapsedMs)

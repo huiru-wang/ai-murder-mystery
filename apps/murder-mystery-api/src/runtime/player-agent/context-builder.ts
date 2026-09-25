@@ -124,11 +124,14 @@ export class PlayerAgentContextBuilder {
       `round = ${definition.id}`,
       `type = ${definition.type}`,
       definition.type==='discussion'?`mode = ${definition.mode}`:'',
-      definition.id==='introduction'
+      definition.type==='discussion'&&definition.requiredAction==='introduce'
         ? '规则：这是自我介绍环节。你必须调用 send_message 公开介绍自己一次；成功发言后本人的介绍立即结束。不要提问，不要跳过。'
         : '',
       trigger.type==='nudge'
         ? '真人玩家正在催促你尽快完成本轮：如果还有值得公开的新内容，立即使用相应工具说出来；如果没有新的关键内容，直接调用 finish_round 结束本轮。催促状态下不要使用 pass，也不要为了拖延而重复旧观点。'
+        : '',
+      trigger.pacing
+        ? `自由讨论控场状态：已持续约 ${trigger.pacing.elapsedMinutes} 分钟，公开交流 ${trigger.pacing.publicMessageCount}/${trigger.pacing.limitPublicMessages} 条，累计 AI 激活 ${trigger.pacing.activationCount}/${trigger.pacing.limitAgentActivations} 次，已结束 ${trigger.pacing.finishedPlayerCount}/${trigger.pacing.totalPlayerCount} 名玩家。控场阈值为 ${trigger.pacing.limitMinutes} 分钟、${trigger.pacing.limitPublicMessages} 条公开交流或 ${trigger.pacing.limitAgentActivations} 次 AI 激活，任一达到后将提醒全桌收敛。若你有关键事实、推理或必须追问的问题，请在本轮尽快通过工具表达；不要等到临近阈值才开始展开。`
         : '',
       trigger.pacing?.level==='should_wrap_up'
         ? `控场提醒：本轮已持续约 ${trigger.pacing.elapsedMinutes} 分钟，公开交流 ${trigger.pacing.publicMessageCount} 条，累计 AI 激活 ${trigger.pacing.activationCount} 次，已有 ${trigger.pacing.finishedPlayerCount}/${trigger.pacing.totalPlayerCount} 名玩家结束本轮。若你已经表达核心观点、没有新的关键事实或必须追问的问题，应倾向于调用 finish_round；如果仍有重要内容，可以继续讨论，不要为了结束而强行结束。`

@@ -8,12 +8,15 @@ export type AgentTriggerType =
   | 'nudge'
 
 export interface DiscussionPacing {
-  level: 'should_wrap_up'
+  level: 'within_limit' | 'should_wrap_up'
   elapsedMinutes: number
   publicMessageCount: number
   activationCount: number
   finishedPlayerCount: number
   totalPlayerCount: number
+  limitMinutes: number
+  limitPublicMessages: number
+  limitAgentActivations: number
 }
 
 export interface AgentTrigger {

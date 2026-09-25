@@ -43,6 +43,19 @@ export class MurderMysteryDatabase {
         updated_at text not null
       );
 
+      create table if not exists script_versions (
+        id text primary key,
+        script_id text not null,
+        version text not null,
+        content_hash text not null,
+        status text not null,
+        definition_json text not null,
+        created_at text not null,
+        unique(script_id, version)
+      );
+
+      create index if not exists idx_script_versions_published on script_versions(status, created_at desc);
+
       create table if not exists room_players (
         id text primary key,
         room_id text not null,

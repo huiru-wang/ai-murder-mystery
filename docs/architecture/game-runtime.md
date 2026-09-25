@@ -2,25 +2,19 @@
 
 ## Round 状态机
 
-当前《第七码头》的 Round 顺序由 `ScriptDefinition` 固定：
+每个 Room 的 Round 顺序由创建时钉住的 `ScriptDefinition` 版本决定。以下是 v1 的结构，而不是固定剧本流程：
 
 ```text
-introduction
+作者自定义的首阶段（ordered + requiredAction: introduce）
   ↓
-discussion-1
+至少一个讨论和一个搜证阶段（作者定义顺序与数量）
   ↓
-search-1
+投票（固定倒数第二阶段）
   ↓
-discussion-2
-  ↓
-search-2
-  ↓
-final-discussion
-  ↓
-vote
-  ↓
-reveal
+揭晓（固定最后阶段）
 ```
+
+v1 支持 5–10 个阶段；阶段 ID、标题、讨论模式、搜证次数、角色、地点和线索均由剧本包声明。格式约束见[剧本包文档](../platform/script-packages.md)。
 
 GameDirector 是这套状态机的唯一规则入口。
 
@@ -137,6 +131,8 @@ AI_MURDER_MYSTERY_DISCUSSION_PACING_ACTIVATION_COUNT=45
 1. 当前轮只发布一次 `discussion_pacing_reminder` 公共系统事件，真人和 AI 都能看到。
 2. 后续 AI Dynamic Prompt 带上当前时长、公开交流数、activation 数以及已结束玩家数。
 3. Prompt 建议 AI 在没有关键新内容时倾向 `finish_round`，但仍允许继续讨论。
+
+无论是否达到阈值，Scheduler 在每一次自由讨论 Trigger 中都会注入当前已持续时间、公开交流数、AI 激活数、已结束人数以及三项配置阈值。Agent 因而从第一次被唤醒起就知道本轮讨论有限，若有关键事实、推理或必须追问的问题，应尽快通过工具表达，而不是等待系统进入收敛状态才开始展开。
 
 这是一种“确定性检测 + Agent 自主决定”的软控制，不让 Scheduler 替角色做内容判断。
 

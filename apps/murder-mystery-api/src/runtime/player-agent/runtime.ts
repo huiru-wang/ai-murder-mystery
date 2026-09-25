@@ -96,7 +96,7 @@ export class LivePlayerAgentRuntime implements PlayerAgentRuntime {
     let toolCount=0
     let terminalCalled=false
     const terminalTools=new Set(['pass','finish_round','yield_turn','finish_search','submit_vote'])
-    if(definition.id==='introduction') terminalTools.add('send_message')
+    if(definition.type==='discussion'&&definition.requiredAction==='introduce') terminalTools.add('send_message')
     const unsubscribe=managed.harness.hooks.on('before_tool',({toolName})=>{
       if(terminalCalled) return {block:{reason:'This activation already ended with a terminal game action',terminate:true}}
       toolCount+=1
@@ -144,7 +144,7 @@ export class LivePlayerAgentRuntime implements PlayerAgentRuntime {
         }
       }
       let introductionResolved=false
-      if(definition.id==='introduction'&&modelCompleted) {
+      if(definition.type==='discussion'&&definition.requiredAction==='introduce'&&modelCompleted) {
         let active=this.rooms.getCurrentRound(trigger.roomId)
         introductionResolved=active?.id!==roundAtStart.id
           || this.rooms.requireRoundState(roundAtStart.id,trigger.playerId).initialActionDone
@@ -294,7 +294,7 @@ export class MockPlayerAgentRuntime implements PlayerAgentRuntime {
           `针对你的问题，我目前能确认的是：${fact}`,
         )
       } else if(state.activationCount===0) {
-        const message=definition.id==='introduction'
+        const message=definition.requiredAction==='introduce'
           ? `我是${role.name}，${role.occupation}。${role.publicProfile}`
           : `${role.knownFacts[0]??'我先根据目前公开信息继续观察。'}`
         this.commands.sendMessage(trigger.roomId,player.id,randomUUID(),message)
@@ -314,10 +314,8 @@ export class MockPlayerAgentRuntime implements PlayerAgentRuntime {
       if(clue&&state.searchActionsUsed<definition.actionsPerPlayer) {
         const result=this.commands.searchClue(trigger.roomId,player.id,randomUUID(),clue.locationId) as {holdingId:string}
         const holding=this.rooms.requireHolding(trigger.roomId,result.holdingId)
-        const shouldHide=role.id==='he-chuan'&&['key','fiber','draft','power-question'].includes(holding.clueId)
         if(holding.state==='private') {
-          if(shouldHide) this.commands.keepCluePrivate(trigger.roomId,player.id,randomUUID(),holding.id)
-          else this.commands.revealClue(trigger.roomId,player.id,randomUUID(),holding.id)
+          this.commands.revealClue(trigger.roomId,player.id,randomUUID(),holding.id)
         }
       }
       const latest=this.rooms.requireRoundState(round.id,player.id)
@@ -328,7 +326,7 @@ export class MockPlayerAgentRuntime implements PlayerAgentRuntime {
     }
 
     if(definition.type==='vote') {
-      const target=role.id==='he-chuan'?'shen-yan':'he-chuan'
+      const target=script.roles.find(candidate=>candidate.id!==role.id)?.id??role.id
       this.commands.submitVote(trigger.roomId,player.id,randomUUID(),target,'mock vote')
     }
   }

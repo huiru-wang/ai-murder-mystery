@@ -59,6 +59,9 @@ AI_MURDER_MYSTERY_SQLITE_PATH=data/game.sqlite
 
 # Agent 会话数据库 SQLite 文件路径，用于保存 AI 玩家会话和模型上下文。默认值：data/agent.sqlite。
 AI_MURDER_MYSTERY_AGENT_DB=data/agent.sqlite
+
+# 可选：启动时扫描并导入其中的 .zip 种子剧本。未配置或目录不存在时，服务以空剧本库启动。
+AI_MURDER_MYSTERY_SCRIPT_PACKAGE_DIR=data/scripts
 ```
 
 ### 模型
@@ -107,6 +110,20 @@ data/agent.sqlite
 
 `game.sqlite` 保存游戏事实；`agent.sqlite` 保存 Agent Harness Session。二者职责不同，不应合并为一个 source of truth。
 
+`game.sqlite` 的 `script_versions` 表保存已导入剧本的标准化定义。上传 ZIP 会在临时目录中校验后立即清理，v1 不保存上传原件或其中的 assets；配置的 `data/scripts` 仅用于启动时导入种子包。
+
+## 剧本包开发与导入
+
+剧本格式、校验项、版本约束和 HTTP API 见[剧本包、导入与版本](../platform/script-packages.md)。创作故事并生成包时，使用仓库已有的 [`murder-mystery-script-creator`](../../skills/murder-mystery-script-creator/) Skill。
+
+可用真实导入器在本地校验一个 ZIP：
+
+```bash
+pnpm --filter @ai-murder-mystery/api exec tsx ../../skills/murder-mystery-script-creator/scripts/validate-package.ts /absolute/path/to/package.zip
+```
+
+通过校验后，可以在首页选择“导入 ZIP”，或向 `POST /api/scripts/import` 提交 `multipart/form-data` 的 `package` 文件字段。成功导入只发布剧本；创建 Room 仍需另行选择剧本并调用创建房间流程。
+
 ## 测试与验证
 
 常用验证：
@@ -134,3 +151,4 @@ API E2E 使用 Mock Agent，不依赖外部 Provider。
 - Room 删除生命周期
 - SQLite migration
 - Scheduler pacing 配置
+- 剧本 ZIP 导入、版本幂等和 Room 版本钉住

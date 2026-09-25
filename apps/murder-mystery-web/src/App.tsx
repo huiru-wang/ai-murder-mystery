@@ -86,7 +86,7 @@ function writeRoomIndex(items:SavedRoomRef[]){
 
 export default function App(){
   const [scripts,setScripts]=useState<ScriptSummary[]>([])
-  const [scriptId,setScriptId]=useState('seventh-pier')
+  const [scriptId,setScriptId]=useState('')
   const [session,setSession]=useState<SessionRef|null>(()=>readActiveRoom())
   const [roomRefs,setRoomRefs]=useState<SavedRoomRef[]>(()=>readRoomIndex())
   const [savedRooms,setSavedRooms]=useState<RoomView[]>([])
@@ -129,7 +129,10 @@ export default function App(){
 
   useEffect(()=>{
     void request<{items:ScriptSummary[]}>('/api/scripts')
-      .then(result=>setScripts(result.items))
+      .then(result=>{
+        setScripts(result.items)
+        setScriptId(current=>current&&result.items.some(item=>item.id===current)?current:result.items[0]?.id??'')
+      })
       .catch(showError)
   },[])
 
@@ -240,6 +243,16 @@ export default function App(){
     })
   }
 
+  async function importScript(file:File){
+    await act(async()=>{
+      const form=new FormData()
+      form.set('package',file)
+      const result=await request<{item:ScriptSummary}>('/api/scripts/import',{method:'POST',body:form})
+      setScripts(current=>[result.item,...current.filter(item=>item.id!==result.item.id)])
+      setScriptId(result.item.id)
+    })
+  }
+
   async function post(path:string,body:Record<string,unknown>={}){
     if(!session)throw new Error('没有当前房间')
     return request<RoomView>('/api/rooms/'+session.roomId+path,json({playerId:session.playerId,...body}))
@@ -317,6 +330,7 @@ export default function App(){
       onCreate={createRoom}
       onResume={resumeRoom}
       onForget={removeRoom}
+      onImport={importScript}
       error={error}
     />
   }
@@ -435,7 +449,7 @@ export default function App(){
   </div>
 }
 
-function Landing({scripts,selectedScript,scriptId,busy,savedRooms,roomRefs,onScript,onCreate,onResume,onForget,error}:{
+function Landing({scripts,selectedScript,scriptId,busy,savedRooms,roomRefs,onScript,onCreate,onResume,onForget,onImport,error}:{
   scripts:ScriptSummary[]
   selectedScript?:ScriptSummary
   scriptId:string
@@ -446,6 +460,7 @@ function Landing({scripts,selectedScript,scriptId,busy,savedRooms,roomRefs,onScr
   onCreate:()=>void
   onResume:(ref:SessionRef)=>void
   onForget:(ref:SessionRef)=>void|Promise<void>
+  onImport:(file:File)=>void|Promise<void>
   error:string
 }){
   return <main className="landing">
@@ -477,7 +492,7 @@ function Landing({scripts,selectedScript,scriptId,busy,savedRooms,roomRefs,onScr
                 <strong>{saved.script.title}</strong>
                 <p>{saved.me?.roleName??'尚未选择角色'} · 房间 {saved.id.slice(0,8).toUpperCase()}</p>
                 <div className="saved-room-progress"><i style={{width:progress+'%'}}/></div>
-                <small>{saved.status==='completed'?'案件已复盘':saved.status==='lobby'?'等待选择角色':roundLabel(saved.currentRound?.definitionId)} · {progress}%</small>
+                <small>{saved.status==='completed'?'案件已复盘':saved.status==='lobby'?'等待选择角色':roundLabel(saved.currentRound?.title)} · {progress}%</small>
               </div>
               <div className="saved-room-actions">
                 <button className="dark-small" onClick={()=>onResume(ref)}>继续</button>
@@ -489,17 +504,30 @@ function Landing({scripts,selectedScript,scriptId,busy,savedRooms,roomRefs,onScr
         <div className="saved-room-separator"><span>开始新游戏</span></div>
       </div>}
 
-      <div className="section-label">01 · 选择剧本</div>
+      <div className="script-library-head">
+        <div>
+          <div className="section-label">01 · 剧本库</div>
+          <p>选择一个剧本后，再创建新的推理房间。</p>
+        </div>
+        <label className="import-script-button">
+          <span>＋</span> 导入 ZIP
+        <input type="file" accept=".zip,application/zip" hidden disabled={busy}
+          onChange={event=>{const file=event.target.files?.[0];if(file)void onImport(file);event.currentTarget.value=''}}/>
+        </label>
+      </div>
       <div className="script-choice">
         {scripts.map(script=><button key={script.id} className={scriptId===script.id?'selected':''} onClick={()=>onScript(script.id)}>
-          <span>{script.playerCount} 人本</span>
+          <div><span>{script.playerCount} 人本</span><small>v{script.version}</small></div>
           <strong>{script.title}</strong>
           <p>{script.description}</p>
-          <small>版本 {script.version}</small>
         </button>)}
       </div>
-      <div className="section-label">02 · 故事背景</div>
-      {selectedScript?.publicContext&&<p className="story-preview">{selectedScript.publicContext}</p>}
+      {!scripts.length&&<Empty title="暂无剧本" text="导入符合剧本包规范的 ZIP 后，即可创建新的推理房间。"/>}
+      {selectedScript&&<div className="selected-script-preview">
+        <div className="section-label">02 · 剧本简介</div>
+        <strong>{selectedScript.title}</strong>
+        {selectedScript.publicContext&&<p className="story-preview">{selectedScript.publicContext}</p>}
+      </div>}
       <button className="ink-button" disabled={busy||!selectedScript} onClick={onCreate}>
         创建新房间 <span>→</span>
       </button>
@@ -548,7 +576,7 @@ function GameHeader({room,leave,onPeople}:{room:RoomView;leave:()=>void;onPeople
   return <header className="game-header">
     <div className="header-brand"><span className="brand-seal small">剧</span><div><strong>{room.script.title}</strong><small>ROOM · {room.id.slice(0,8).toUpperCase()}</small></div></div>
     <div className="round-chip">
-      <span className="live-dot"/><strong>{roundLabel(room.currentRound?.definitionId)}</strong>
+      <span className="live-dot"/><strong>{roundLabel(room.currentRound?.title)}</strong>
       <small>{roundModeLabel(room.currentRound?.mode)}</small>
     </div>
     <div className="header-actions">
@@ -792,8 +820,8 @@ function ProgressView({room}:{room:RoomView}){
         const complete=round.index<currentIndex
         return <article key={round.id} className={isCurrent?'current':complete?'complete':''}>
           <span className="round-node">{complete?'✓':String(round.index+1).padStart(2,'0')}</span>
-          <div><small>{roundTypeLabel(round.type)}</small><h3>{roundLabel(round.id)}</h3>
-            <p>{roundDescription(round.id,round.type,round.mode)}</p></div>
+          <div><small>{roundTypeLabel(round.type)}</small><h3>{roundLabel(round.title)}</h3>
+            <p>{roundDescription(round.type,round.mode)}</p></div>
           {isCurrent&&<b>进行中</b>}
         </article>
       })}
@@ -828,7 +856,7 @@ function ActionDock(props:{
   if(!round)return null
 
   if(round.type==='discussion'){
-    const isIntroduction=round.definitionId==='introduction'
+    const isIntroduction=round.requiredAction==='introduce'
     const canTalk=actions.has('SEND_MESSAGE')||actions.has('ASK_PLAYER')||actions.has('REPLY_QUESTION')
     const done=room.me?.roundStatus==='done'
     const targetLabel=props.replyQuestion?.fromName??props.target?.roleName
@@ -1081,19 +1109,7 @@ function Empty({title,text}:{title:string;text:string}){
 
 function ErrorBar({text}:{text:string}){return <div className="error-toast">{text}</div>}
 
-function roundLabel(id?:string){
-  const labels:Record<string,string>={
-    'introduction':'人物介绍',
-    'discussion-1':'第一轮讨论',
-    'search-1':'第一轮搜证',
-    'discussion-2':'第二轮讨论',
-    'search-2':'第二轮搜证',
-    'final-discussion':'最终讨论',
-    'vote':'最终投票',
-    'reveal':'真相公布',
-  }
-  return id?labels[id]??id:'等待开始'
-}
+function roundLabel(title?:string){ return title??'等待开始' }
 
 function roundTypeLabel(type:string){
   return ({discussion:'讨论',search:'搜证',vote:'投票',reveal:'复盘'} as Record<string,string>)[type]??type
@@ -1116,8 +1132,7 @@ function roundModeLabel(mode?:string){
   return ''
 }
 
-function roundDescription(id:string,type:string,mode?:string){
-  if(id==='introduction')return '依次获得行动机会，建立公开身份与第一印象。'
+function roundDescription(type:string,mode?:string){
   if(type==='discussion')return mode==='free'?'自由发言、定向质询；所有玩家明确结束本轮后推进。':'按剧本规则获得行动机会。'
   if(type==='search')return '选择地点搜证；线索可能公开，也可能只属于持有人。'
   if(type==='vote')return '所有人独立密封提交最终判断。'
@@ -1125,10 +1140,7 @@ function roundDescription(id:string,type:string,mode?:string){
   return ''
 }
 
-function locationLabel(id:string){
-  const labels:Record<string,string>={'control-room':'控制室','office':'罗行办公室','exhibition':'纪念展厅','power-room':'配电间'}
-  return labels[id]??id
-}
+function locationLabel(id:string){ return id }
 
 function systemEventIcon(type:string){
   if(type==='clue_revealed')return '证'
@@ -1141,8 +1153,8 @@ function systemEventIcon(type:string){
 
 function systemEventTitle(event:PublicTimelineEvent){
   if(event.type==='clue_revealed')return `公开线索 · ${String(event.payload.title??'')}`
-  if(event.type==='round_started')return roundLabel(String(event.payload.roundDefinitionId??''))
-  if(event.type==='round_completed')return `${roundLabel(String(event.payload.roundDefinitionId??''))}结束`
+  if(event.type==='round_started')return roundLabel(String(event.payload.title??event.payload.roundDefinitionId??''))
+  if(event.type==='round_completed')return `${roundLabel(String(event.payload.title??event.payload.roundDefinitionId??''))}结束`
   if(event.type==='discussion_pacing_reminder')return '控场提醒'
   if(event.type==='game_completed')return '案件结束'
   if(event.type==='room_started')return '游戏开始'

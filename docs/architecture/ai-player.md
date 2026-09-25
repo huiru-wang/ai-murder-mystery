@@ -77,9 +77,9 @@ System Prompt 版本通过 Agent revision 管理。重要 Prompt 变化时提升
 - 当前完整公共 Timeline
 - Pending direct question
 - 搜证地点、搜证额度和搜证状态
-- Scheduler pacing / 收敛提醒
+- 当前自由讨论的 Scheduler pacing 状态、已进行时长、公开交流数、AI 激活数、已结束人数和全部收敛阈值
 
-Dynamic Context 的作用是让同一个长期 Agent Session 在每次被激活时重新对齐当前游戏状态，而不是只依赖历史消息自行猜测。
+Dynamic Context 的作用是让同一个长期 Agent Session 在每次被激活时重新对齐当前游戏状态，而不是只依赖历史消息自行猜测。即使讨论尚未达到收敛阈值，AI 也能从上下文感知剩余的讨论预算，避免拖到系统提醒后才开始表达关键内容。
 
 ## 一次 Agent Activation
 

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import test from 'node:test'
 import { RoomCommandService } from '../src/domain/room/commands.js'
@@ -10,6 +12,7 @@ import { RoomQueryService } from '../src/domain/room/queries.js'
 import { RoomRepository } from '../src/domain/room/repository.js'
 import { GameDirector, shuffledTurnOrder } from '../src/domain/round/director.js'
 import { ScriptRepository } from '../src/domain/script/repository.js'
+import { ScriptPackageImporter } from '../src/domain/script/importer.js'
 import { assertLiveModelConfigured, readSchedulerConfig } from '../src/infra/config/ai.js'
 import { MurderMysteryDatabase } from '../src/infra/sqlite/database.js'
 import { PlayerAgentContextBuilder } from '../src/runtime/player-agent/context-builder.js'
@@ -17,9 +20,13 @@ import { MockPlayerAgentRuntime } from '../src/runtime/player-agent/runtime.js'
 import { createPlayerTools } from '../src/runtime/player-agent/tools/index.js'
 import { RoomScheduler } from '../src/runtime/scheduler/room-scheduler.js'
 
+const seventhPierPackage=resolve(dirname(fileURLToPath(import.meta.url)),'../../../data/scripts/第七码头.zip')
+
 function createWorld() {
   const database = new MurderMysteryDatabase(':memory:')
-  const scripts = new ScriptRepository()
+  const scripts = new ScriptRepository(database)
+  const importer = new ScriptPackageImporter(scripts)
+  importer.importZip(readFileSync(seventhPierPackage))
   const rooms = new RoomRepository(database)
   const director = new GameDirector(rooms, scripts)
   const commands = new RoomCommandService(rooms, scripts, director)
@@ -29,6 +36,40 @@ function createWorld() {
   const scheduler = new RoomScheduler(rooms, director, runtime)
   return { database, scripts, rooms, director, commands, queries, contextBuilder, runtime, scheduler }
 }
+
+test('script repository is empty until a ZIP package is imported and persists the published version', () => {
+  const database=new MurderMysteryDatabase(':memory:')
+  try {
+    const scripts=new ScriptRepository(database)
+    assert.deepEqual(scripts.list(),[])
+    const script=new ScriptPackageImporter(scripts).importZip(readFileSync(seventhPierPackage))
+    assert.equal(script.id,'seventh-pier')
+    assert.equal(scripts.list().length,1)
+    assert.equal(scripts.getByVersionId('seventh-pier@2.0.0')?.title,'第七码头')
+  } finally { database.close() }
+})
+
+test('published script versions survive a database restart', () => {
+  const directory=mkdtempSync(join(tmpdir(),'murder-mystery-script-restart-'))
+  const path=join(directory,'game.sqlite')
+  try {
+    const first=new MurderMysteryDatabase(path)
+    new ScriptPackageImporter(new ScriptRepository(first)).importZip(readFileSync(seventhPierPackage))
+    first.close()
+    const restored=new MurderMysteryDatabase(path)
+    assert.equal(new ScriptRepository(restored).getById('seventh-pier')?.version,'2.0.0')
+    restored.close()
+  } finally { rmSync(directory,{recursive:true,force:true}) }
+})
+
+test('script importer rejects invalid ZIP content without publishing a version', () => {
+  const database=new MurderMysteryDatabase(':memory:')
+  try {
+    const scripts=new ScriptRepository(database)
+    assert.throws(()=>new ScriptPackageImporter(scripts).importZip(Buffer.from('not a zip')),/SCRIPT_PACKAGE_INVALID/)
+    assert.deepEqual(scripts.list(),[])
+  } finally { database.close() }
+})
 
 function startOneHuman(w: ReturnType<typeof createWorld>) {
   const room = w.commands.createRoom('seventh-pier', 1)
@@ -47,7 +88,7 @@ function startOneHuman(w: ReturnType<typeof createWorld>) {
 
 async function finishIntroduction(w: ReturnType<typeof createWorld>, roomId: string, _humanId: string) {
   const intro = w.rooms.getCurrentRound(roomId)!
-  assert.equal(w.director.definition(roomId).id, 'introduction')
+  assert.equal(w.director.definition(roomId).requiredAction, 'introduce')
   for (const playerId of intro.turnOrder) {
     const player = w.rooms.requirePlayer(roomId, playerId)
     assert.equal(w.director.isOrderedTurn(roomId, playerId), true)
@@ -350,9 +391,9 @@ test('introduction requires exactly one public speech from every player in the p
   try {
     const { roomId, human } = startOneHuman(w)
     const intro = w.rooms.getCurrentRound(roomId)!
-    assert.equal(w.director.definition(roomId).id, 'introduction')
+    assert.equal(w.director.definition(roomId).requiredAction, 'introduce')
     assert.throws(() => w.commands.finishRound(roomId, human.id, randomUUID()), /TOOL_NOT_ALLOWED_IN_ROUND/)
-    assert.throws(() => w.commands.yieldTurn(roomId, human.id, randomUUID()), /TOOL_NOT_ALLOWED_IN_ROUND/)
+    assert.throws(() => w.commands.yieldTurn(roomId, human.id, randomUUID()), /(TOOL_NOT_ALLOWED_IN_ROUND|NOT_ORDERED_TURN)/)
 
     const players = w.rooms.listPlayers(roomId)
     assert.equal(intro.turnOrder.length, players.length)
@@ -469,6 +510,24 @@ test('free discussion advances only after every player explicitly finishes', asy
     w.commands.finishRound(roomId, players.at(-1)!.id, randomUUID())
     assert.equal(w.director.definition(roomId).id, 'search-1')
     assert.ok(w.rooms.listRoundStates(round.id).every(state => state.discussionFinished))
+  } finally {
+    await w.runtime.close()
+    w.database.close()
+  }
+})
+
+test('every free-discussion wake-up includes the current pacing state and thresholds', async () => {
+  const w = createWorld()
+  try {
+    const { roomId, human } = startOneHuman(w)
+    await finishIntroduction(w, roomId, human.id)
+    const trigger = w.scheduler.nextTrigger(roomId).trigger
+    assert.ok(trigger)
+    assert.equal(trigger.pacing?.level, 'within_limit')
+    const context = w.contextBuilder.build(roomId, trigger.playerId, trigger)
+    assert.ok(context.dynamicPrompt.includes('自由讨论控场状态'))
+    assert.ok(context.dynamicPrompt.includes('公开交流 0/30 条'))
+    assert.ok(context.dynamicPrompt.includes('控场阈值为 8 分钟、30 条公开交流或 45 次 AI 激活'))
   } finally {
     await w.runtime.close()
     w.database.close()

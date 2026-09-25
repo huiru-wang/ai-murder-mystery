@@ -117,7 +117,7 @@ AI 的自然语言输出本身不会改变游戏，也不会自动进入群聊�
 
 游戏状态和 Agent 会话分开存储：
 
-- `game.sqlite`：Room、Round、Player、Event、Clue、Vote、Agent binding/run 等游戏数据。
+- `game.sqlite`：已发布的剧本版本、Room、Round、Player、Event、Clue、Vote、Agent binding/run 等游戏数据。
 - `agent.sqlite`：Agent Harness Session 与模型会话历史。
 
 AI Session 绑定到 `(roomId, playerId)`。即使两个房间使用同一个剧本、同一个角色，也不会复用 Session。
@@ -127,3 +127,11 @@ AI Session 绑定到 `(roomId, playerId)`。即使两个房间使用同一个剧
 Room 状态是恢复 AI 上下文的基础。API 重启后，会恢复仍处于 active 状态的房间；如果绑定的 Agent Session 不存在或 revision 不兼容，会创建新的 Session，并依据持久化房间状态重新构建上下文。
 
 因此 Agent Session 是持续体验的一部分，但不是唯一 source of truth；游戏事实仍以 Room 持久状态为准。
+
+## 剧本包
+
+剧本不是 TypeScript 常量。导入 API 接收 ZIP，在安全检查、结构检查和流程语义检查通过后，将不可变的标准化定义保存为已发布剧本版本。`ScriptRepository` 只查询 SQLite 的 `script_versions.definition_json`；没有已发布剧本时返回空列表。
+
+上传 ZIP 仅在导入过程中写入临时目录、解压和校验；校验完成后临时文件即删除。v1 不保存原 ZIP、`README.md` 或 `assets/`，也不提供剧本删除、下载或取消发布 API。服务可通过 `AI_MURDER_MYSTERY_SCRIPT_PACKAGE_DIR` 在启动时扫描 ZIP 资源目录并幂等导入，适合开发或部署时的种子剧本；该目录是导入来源，并不是用户上传包的存储位置。
+
+用户导入后的标准化定义保存在数据库，服务重启后仍可创建房间。Room 保存的是 `scriptVersionId`，所以后续导入同一剧本的新版本不会改变历史 Room。完整格式与校验规则见[剧本包、导入与版本](../platform/script-packages.md)。

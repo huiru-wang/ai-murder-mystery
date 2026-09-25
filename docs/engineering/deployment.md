@@ -45,6 +45,7 @@ AI_MURDER_MYSTERY_ENV_FILE
 - `AI_MURDER_MYSTERY_MODEL_NAME`
 - 对应 Provider API Key
 - Scheduler pacing 配置可按需要覆盖默认值
+- 可选的 `AI_MURDER_MYSTERY_SCRIPT_PACKAGE_DIR`（仅用于随部署导入种子 ZIP）
 
 ## 部署目录
 
@@ -58,6 +59,14 @@ AI_MURDER_MYSTERY_ENV_FILE
 /var/lib/ai-murder-mystery/logs/api.log API 日志
 /var/lib/ai-murder-mystery/run/api.pid PID 文件
 ```
+
+若配置种子剧本目录，应将其放在持久化运行目录中，例如：
+
+```text
+/var/lib/ai-murder-mystery/scripts/*.zip
+```
+
+并令 `AI_MURDER_MYSTERY_SCRIPT_PACKAGE_DIR=/var/lib/ai-murder-mystery/scripts`。启动时会校验并幂等导入这些包；它们最终同样以标准化定义保存在 `game.sqlite`。浏览器上传的 ZIP 不会被写入该目录，也不会保存原 ZIP 或 assets。
 
 ## Nginx 与证书
 
@@ -112,3 +121,5 @@ pnpm deploy
 ```
 
 如果未来引入 systemd、pm2 或容器编排，需要同步更新本文件和 README，不能让文档继续描述旧运行方式。
+
+当前 v1 也没有剧本删除、取消发布或原包下载接口。若运营需要这些能力，应先为数据库版本、历史 Room 引用和审计策略定义新的平台能力，再扩展 API；不要直接删除 SQLite 行。

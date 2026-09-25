@@ -1,5 +1,10 @@
 # Documentation
 
+## 剧本平台与创作
+
+- [剧本包、导入与版本](./platform/script-packages.md) — 当前 ZIP 格式、校验、SQLite 持久化、版本规则和 API 边界。
+- [剧本创作 Skill 使用说明](./authoring/script-creator.md) — 如何用现有 Skill 把故事制作成可导入的剧本包，以及本地验证方式。
+
 ## 产品
 
 - [产品逻辑](./product/product.md) — 产品是什么、玩家如何完成一局游戏、AI 玩家在用户侧如何表现。

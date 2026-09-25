@@ -124,8 +124,10 @@ export interface PendingQuestionView {
 export interface CurrentRoundView {
   id: string
   definitionId: string
+  title: string
   type: RoundType
   mode?: DiscussionMode
+  requiredAction?: 'introduce'
   index: number
   status: 'active' | 'completed'
   sharedVersionAtStart: number
@@ -134,6 +136,7 @@ export interface CurrentRoundView {
 
 export interface RoundPlanItem {
   id: string
+  title: string
   type: RoundType
   mode?: DiscussionMode
   index: number
